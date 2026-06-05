@@ -85,9 +85,16 @@ async def _run(
     login_strategy = create_login_strategy(login, username, password)
 
     # Stap 3: ontdek alle pagina's
+    # Voor sites zonder login: snel via httpx/sitemap.
+    # Voor sites met login: httpx heeft geen auth-cookies en krijgt de loginpagina
+    # terug — discovery gebeurt dan via de browser na inloggen (in scrape_pages).
     click.echo("📡  Pagina's ontdekken...")
-    pages = await discover_pages(url)
-    click.echo(f"   → {len(pages)} pagina's gevonden.")
+    if login_strategy.mode == "none":
+        pages = await discover_pages(url)
+        click.echo(f"   → {len(pages)} pagina's gevonden.")
+    else:
+        pages = []
+        click.echo("   → Via browser na inloggen (geauthenticeerde sessie).")
 
     # Stap 4: scrape pagina's met Playwright
     click.echo("🌐  Pagina's laden en content extraheren...")

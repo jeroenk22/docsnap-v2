@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
-from playwright.async_api import Browser, Page, async_playwright
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
+from .discovery import _is_html_url
 from .login import LoginStrategy, apply_login
 
 # CSS selectors voor veelgebruikte collapsible elementen
@@ -45,10 +47,12 @@ async def scrape_pages(
     """Scrape een lijst van URLs en geef de volledige HTML terug.
 
     Args:
-        urls:           Te scrapen pagina's.
+        urls:           Te scrapen pagina's. Mag leeg zijn als start_url opgegeven is
+                        en login niet 'none' is — in dat geval worden pagina's via de
+                        browser ontdekt na inloggen.
         login_strategy: Login configuratie.
         headless:       Als None, automatisch bepaald op basis van login mode.
-        start_url:      URL voor login; valt terug op urls[0] als None.
+        start_url:      URL voor login én voor browser-based discovery.
 
     Returns:
         Lijst van ScrapedPage objecten.
@@ -69,13 +73,22 @@ async def scrape_pages(
         )
 
         # Login op de startpagina als nodig
-        if login_strategy.mode != "none" and urls:
+        if login_strategy.mode != "none" and (urls or start_url):
             login_url = start_url if start_url is not None else urls[0]
             login_page = await context.new_page()
             await apply_login(login_page, login_strategy, login_url)
             await login_page.close()
 
-        for url in urls:
+        # Voor geauthenticeerde sessies: ontdek pagina's via de browser zodat
+        # JS-rendered nav en login-vereiste pagina's ook gevonden worden.
+        if start_url is not None and login_strategy.mode != "none":
+            print(f"🔍  Browser discovery vanuit {start_url}...")
+            scrape_urls = await _browser_discover_pages(context, start_url)
+            print(f"   → {len(scrape_urls)} pagina's gevonden.")
+        else:
+            scrape_urls = urls
+
+        for url in scrape_urls:
             try:
                 page = await context.new_page()
                 scraped = await _scrape_single_page(page, url)
@@ -89,6 +102,54 @@ async def scrape_pages(
     return results
 
 
+async def _browser_discover_pages(
+    context: BrowserContext,
+    base_url: str,
+    max_pages: int = 500,
+) -> list[str]:
+    """BFS link discovery via een geauthenticeerde browser context.
+
+    Bezoekt base_url en volgt recursief alle interne HTML-links totdat
+    max_pages bereikt is.
+    """
+    parsed = urlparse(base_url)
+    visited: set[str] = set()
+    queue: list[str] = [base_url]
+
+    page = await context.new_page()
+    try:
+        while queue and len(visited) < max_pages:
+            url = queue.pop(0)
+            if url in visited:
+                continue
+            visited.add(url)
+
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+
+                links: list[str] = await page.eval_on_selector_all(
+                    "a[href]",
+                    "els => els.map(e => e.href)",
+                )
+                for link in links:
+                    clean = link.split("#")[0].split("?")[0].rstrip("/")
+                    if (
+                        clean
+                        and urlparse(clean).netloc == parsed.netloc
+                        and clean not in visited
+                        and clean not in queue
+                        and _is_html_url(clean)
+                    ):
+                        queue.append(clean)
+            except Exception:  # noqa: BLE001
+                continue
+    finally:
+        await page.close()
+
+    return sorted(visited)
+
+
 async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
     """Laad één pagina volledig en geef de HTML terug."""
     await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
@@ -97,7 +158,9 @@ async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
     await _expand_accordions(page)
     await asyncio.sleep(0.5)
 
-    html = await page.content()
+    # inner_html('body') slaat de <head> over (CSS/scripts) zodat Claude
+    # alleen de zichtbare pagina-inhoud ontvangt.
+    html = await page.inner_html("body")
     title = await page.title()
     return ScrapedPage(url=url, html=html, title=title)
 
