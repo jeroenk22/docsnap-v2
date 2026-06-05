@@ -65,12 +65,21 @@ async def scrape_pages(
     results: list[ScrapedPage] = []
 
     async with async_playwright() as pw:
-        browser: Browser = await pw.chromium.launch(headless=headless)
+        browser: Browser = await pw.chromium.launch(
+            headless=headless,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context = await browser.new_context(
             user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
+        )
+        # Verberg automation-markeringen die Cloudflare en andere bot-detectie
+        # triggeren. navigator.webdriver is altijd 'true' in een standaard
+        # Playwright-browser; dit script overschrijft dat vóór elke paginalading.
+        await context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
 
         # Fase 1 — Login
@@ -174,7 +183,10 @@ async def _browser_discover_pages(
 
             try:
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                await page.wait_for_load_state("networkidle", timeout=10_000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                except Exception:  # noqa: BLE001
+                    pass
 
                 # Sla HTTP-foutpagina's (404, 403, 500 etc.) over — generiek voor
                 # elke website. Dode links of verwijderde pagina's worden zo niet
@@ -227,7 +239,10 @@ async def _browser_discover_pages(
 async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
     """Laad één pagina volledig en geef de HTML terug."""
     await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-    await page.wait_for_load_state("networkidle", timeout=10_000)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=10_000)
+    except Exception:  # noqa: BLE001
+        pass  # content is geladen; continue background requests zijn geen probleem
     await _scroll_to_bottom(page)
     await _expand_accordions(page)
     await asyncio.sleep(0.5)
