@@ -88,7 +88,9 @@ async def scrape_pages(
         else:
             scrape_urls = urls
 
-        for url in scrape_urls:
+        total = len(scrape_urls)
+        for i, url in enumerate(scrape_urls, 1):
+            print(f"   🌐 [{i}/{total}] {url}")
             try:
                 page = await context.new_page()
                 scraped = await _scrape_single_page(page, url)
@@ -128,10 +130,18 @@ async def _browser_discover_pages(
             if url in visited:
                 continue
             visited.add(url)
+            print(f"   🔍 [{len(visited)}/{max_pages}] {url}")
 
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 await page.wait_for_load_state("networkidle", timeout=10_000)
+
+                # Voeg de canonieke URL (na eventuele redirect) toe aan visited
+                # zodat dezelfde pagina niet opnieuw bezocht wordt via een
+                # alternatieve URL (bijv. Confluence ID-URL → titel-URL redirect).
+                canonical = page.url.split("#")[0].split("?")[0].rstrip("/")
+                if canonical != url:
+                    visited.add(canonical)
 
                 links: list[str] = await page.eval_on_selector_all(
                     "a[href]",

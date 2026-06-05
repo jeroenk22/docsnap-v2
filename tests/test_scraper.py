@@ -11,7 +11,7 @@ def _make_login_strategy(mode: str = "form") -> LoginStrategy:
     return LoginStrategy(mode=mode, username="user", password="pass")
 
 
-def _make_mock_page() -> AsyncMock:
+def _make_mock_page(url: str = "https://docs.example.com") -> AsyncMock:
     mock_page = AsyncMock()
     mock_page.goto = AsyncMock()
     mock_page.wait_for_load_state = AsyncMock()
@@ -20,6 +20,7 @@ def _make_mock_page() -> AsyncMock:
     mock_page.inner_html = AsyncMock(return_value="<div>content</div>")
     mock_page.title = AsyncMock(return_value="Test")
     mock_page.close = AsyncMock()
+    mock_page.url = url  # synchrone string-property in echte Playwright
     return mock_page
 
 
@@ -132,6 +133,8 @@ async def test_browser_discover_pages_respects_path_prefix() -> None:
     mock_page.goto = AsyncMock()
     mock_page.wait_for_load_state = AsyncMock()
     mock_page.close = AsyncMock()
+    # page.url is een synchrone string-property in Playwright (geen coroutine)
+    mock_page.url = base_url
     # Eerste aanroep (base_url zelf) geeft alle links terug; vervolgpagina's geven []
     mock_page.eval_on_selector_all = AsyncMock(side_effect=[all_links, [], []])
 
