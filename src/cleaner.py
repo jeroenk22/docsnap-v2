@@ -56,13 +56,15 @@ def _preprocess_html(html: str) -> str:
     return html
 
 
-async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[dict]:
+async def clean_pages(pages: list[ScrapedPage], concurrency: int = 1) -> list[dict]:
     """Reinig een lijst van HTML pagina's naar Markdown via Claude.
 
     Args:
         pages:       Gescrapede pagina's met HTML.
         concurrency: Maximaal aantal gelijktijdige Claude API calls.
-                     Standaard 3 om binnen de Haiku rate limit te blijven.
+                     Standaard 1 (sequentieel) om binnen de Haiku 50K
+                     tokens/min limiet te blijven. Hogere waarden verhogen
+                     het risico op 429-fouten bij pagina's met veel content.
 
     Returns:
         Lijst van dicts met url, title en markdown.
