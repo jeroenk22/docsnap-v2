@@ -37,21 +37,9 @@ Regels:
 - Als er geen documentatie-inhoud is (bijv. loginpagina), geef dan een lege string terug"""
 
 
-def _fmt_url(url: str, max_len: int = 60) -> str:
-    """OSC 8 hyperlink — toont paginanaam als label, OSC 8 bevat de volledige URL.
-
-    Door alleen het pad-segment te tonen (geen 'https://') pakt VS Code de
-    display-tekst niet op als URL, waardoor Ctrl+Click de volledige URL opent.
-    """
-    from urllib.parse import unquote, urlparse
-
-    path = urlparse(url).path.rstrip("/")
-    label = unquote(path.split("/")[-1]) if path else urlparse(url).netloc
-    if not label:
-        label = urlparse(url).netloc
-    if len(label) > max_len:
-        label = label[:max_len - 3] + "..."
-    return f"\033]8;;{url}\033\\{label}\033]8;;\033\\"
+def _fmt_url(url: str) -> str:
+    """OSC 8 hyperlink — volledige URL als display-tekst voor Ctrl+Click in terminal."""
+    return f"\033]8;;{url}\033\\{url}\033]8;;\033\\"
 
 
 def _preprocess_html(html: str) -> str:
