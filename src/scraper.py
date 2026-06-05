@@ -93,7 +93,7 @@ async def scrape_pages(
         print("🌐  Pagina's scrapen...")
         total = len(scrape_urls)
         for i, url in enumerate(scrape_urls, 1):
-            print(f"   [{i}/{total}] {url}")
+            print(f"   [{i}/{total}] {_fmt_url(url)}")
             try:
                 page = await context.new_page()
                 scraped = await _scrape_single_page(page, url)
@@ -105,6 +105,12 @@ async def scrape_pages(
         await browser.close()
 
     return results
+
+
+def _fmt_url(url: str, max_len: int = 60) -> str:
+    """Afgekapte URL met OSC 8 hyperlink voor Ctrl+Click in terminal."""
+    display = url if len(url) <= max_len else url[:max_len - 3] + "..."
+    return f"\033]8;;{url}\033\\{display}\033]8;;\033\\"
 
 
 def _norm_url(url: str) -> str:
@@ -178,7 +184,7 @@ async def _browser_discover_pages(
 
                 if _in_scope(canonical):
                     result.append(canonical)
-                    print(f"   🔍 [{len(result)}/{max_pages}] {canonical}")
+                    print(f"   🔍 [{len(result)}/{max_pages}] {_fmt_url(canonical)}")
 
                 links: list[str] = await page.eval_on_selector_all(
                     "a[href]",

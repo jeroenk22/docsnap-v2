@@ -37,6 +37,12 @@ Regels:
 - Als er geen documentatie-inhoud is (bijv. loginpagina), geef dan een lege string terug"""
 
 
+def _fmt_url(url: str, max_len: int = 60) -> str:
+    """Afgekapte URL met OSC 8 hyperlink voor Ctrl+Click in terminal."""
+    display = url if len(url) <= max_len else url[:max_len - 3] + "..."
+    return f"\033]8;;{url}\033\\{display}\033]8;;\033\\"
+
+
 def _preprocess_html(html: str) -> str:
     """Strip niet-inhoudelijke HTML voor efficiënter token-gebruik.
 
@@ -81,7 +87,7 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[di
         completed[0] += 1
         n = len(result.get("markdown", "").strip())
         label = "⚠️  leeg" if n == 0 else f"{n} tekens"
-        print(f"   [{completed[0]}/{total}] {result['url']}  → {label}")
+        print(f"   [{completed[0]}/{total}] {_fmt_url(result['url'])}  → {label}")
         return result
 
     tasks = [_clean_and_report(page) for page in pages]
@@ -102,7 +108,7 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[di
     if empty:
         print(f"  ⚠️  {len(empty)} zonder content:")
         for c in empty:
-            print(f"        {c['url']}")
+            print(f"        {_fmt_url(c['url'])}")
     else:
         print()
 
