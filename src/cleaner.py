@@ -50,18 +50,24 @@ def _preprocess_html(html: str) -> str:
     return html
 
 
-async def clean_pages(pages: list[ScrapedPage], concurrency: int = 5) -> list[dict]:
+async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[dict]:
     """Reinig een lijst van HTML pagina's naar Markdown via Claude.
 
     Args:
         pages:       Gescrapede pagina's met HTML.
         concurrency: Maximaal aantal gelijktijdige Claude API calls.
+                     Standaard 3 om binnen de Haiku rate limit te blijven.
 
     Returns:
         Lijst van dicts met url, title en markdown.
     """
     semaphore = asyncio.Semaphore(concurrency)
-    client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    # max_retries=6: SDK voert exponentiële backoff uit bij 429 (rate limit)
+    # en 529 (overloaded) — tot ~64 seconden wachttijd per poging.
+    client = anthropic.AsyncAnthropic(
+        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        max_retries=6,
+    )
 
     tasks = [_clean_single_page(client, semaphore, page) for page in pages]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -87,10 +93,12 @@ async def _clean_single_page(
         html_preprocessed = _preprocess_html(page.html)
         html_truncated = html_preprocessed[:MAX_HTML_CHARS]
 
+        # De systeemprompt is identiek voor elke pagina — cache hem zodat die
+        # tokens na de eerste call niet meer tellen voor de rate limit.
         message = await client.messages.create(
             model=MODEL,
             max_tokens=MAX_RESPONSE_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
             messages=[
                 {
                     "role": "user",
