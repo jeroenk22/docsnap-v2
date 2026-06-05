@@ -1,5 +1,17 @@
 """Tests voor Swagger/OpenAPI detectie."""
-from src.swagger import _extract_spec_url, _has_swagger_ui, _is_valid_openapi_spec
+import json
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from src.swagger import (
+    _extract_confluence_page_id,
+    _extract_spec_from_confluence_storage,
+    _extract_spec_url,
+    _has_swagger_ui,
+    _is_valid_openapi_spec,
+    detect_swagger_in_page,
+)
 
 
 def test_has_swagger_ui_detects_swagger_ui():
@@ -51,8 +63,98 @@ def test_is_valid_openapi_spec_non_dict():
 def test_extract_spec_url_from_swagger_ui_config():
     """Spec URL wordt geëxtraheerd uit Swagger UI HTML."""
     html = "SwaggerUIBundle({ url: '/api/openapi.json', dom_id: '#swagger' })"
-    # _extract_spec_url gebruikt een simpele regex die hier mogelijk niet matched
-    # maar de functie mag None teruggeven — dat is ook correct gedrag
     result = _extract_spec_url(html, "https://api.example.com")
-    # Controleer dat het ofwel een string is of None (geen crash)
     assert result is None or isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Tests voor Confluence-specifieke helpers
+# ---------------------------------------------------------------------------
+
+def test_extract_confluence_page_id_from_url():
+    """pageId wordt correct uit een Confluence Cloud URL gehaald."""
+    url = "https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3"
+    assert _extract_confluence_page_id(url, "") == "1866694660"
+
+
+def test_extract_confluence_page_id_from_html_fallback():
+    """pageId wordt uit de HTML gehaald als de URL geen /pages/{id} bevat."""
+    html = '"content.id":"9876543210"'
+    assert _extract_confluence_page_id("https://example.com/wiki", html) == "9876543210"
+
+
+def test_extract_confluence_page_id_not_found():
+    """Geeft None terug als er geen pageId te vinden is."""
+    assert _extract_confluence_page_id("https://example.com", "") is None
+
+
+def test_extract_spec_from_confluence_storage_valid():
+    """OpenAPI JSON wordt correct uit Confluence storage XML geëxtraheerd."""
+    spec = {"openapi": "3.0.3", "info": {"title": "Test API"}}
+    storage_xml = (
+        '<ac:structured-macro ac:name="swagger-integration">'
+        "<ac:plain-text-body><![CDATA["
+        + json.dumps(spec)
+        + "]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    result = _extract_spec_from_confluence_storage(storage_xml)
+    assert result == spec
+
+
+def test_extract_spec_from_confluence_storage_no_cdata():
+    """Geeft None terug als er geen CDATA-blok aanwezig is."""
+    assert _extract_spec_from_confluence_storage("<ac:structured-macro/>") is None
+
+
+def test_extract_spec_from_confluence_storage_invalid_json():
+    """Geeft None terug als de CDATA geen geldig JSON bevat."""
+    storage_xml = "<ac:plain-text-body><![CDATA[niet-json]]></ac:plain-text-body>"
+    assert _extract_spec_from_confluence_storage(storage_xml) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests voor detect_swagger_in_page
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_detect_swagger_in_page_confluence_macro() -> None:
+    """detect_swagger_in_page herkent Confluence embedded swagger en haalt spec op."""
+    spec = {"openapi": "3.0.3", "info": {"title": "MendriX API"}, "paths": {}}
+    storage_xml = (
+        '<ac:plain-text-body><![CDATA[' + json.dumps(spec) + ']]></ac:plain-text-body>'
+    )
+    confluence_response = {
+        "body": {"storage": {"value": storage_xml}}
+    }
+
+    mock_api_resp = AsyncMock()
+    mock_api_resp.ok = True
+    mock_api_resp.json = AsyncMock(return_value=confluence_response)
+
+    mock_request = AsyncMock()
+    mock_request.fetch = AsyncMock(return_value=mock_api_resp)
+
+    mock_page = MagicMock()
+    mock_page.url = "https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3"
+    mock_page.content = AsyncMock(
+        return_value='<html><body id="com.confluence.swagger.api.document"></body></html>'
+    )
+    mock_page.request = mock_request
+
+    result = await detect_swagger_in_page(mock_page)
+
+    assert result is not None
+    assert result["spec"] == spec
+    assert "1866694660" in result["url"]
+
+
+@pytest.mark.asyncio
+async def test_detect_swagger_in_page_returns_none_for_plain_html() -> None:
+    """detect_swagger_in_page geeft None terug voor gewone HTML zonder swagger."""
+    mock_page = MagicMock()
+    mock_page.url = "https://docs.example.com/guide"
+    mock_page.content = AsyncMock(return_value="<html><body><p>Docs</p></body></html>")
+
+    result = await detect_swagger_in_page(mock_page)
+    assert result is None

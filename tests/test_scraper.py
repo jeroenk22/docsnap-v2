@@ -18,6 +18,7 @@ def _make_mock_page(url: str = "https://docs.example.com") -> AsyncMock:
     mock_page.evaluate = AsyncMock(return_value=0)
     mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
     mock_page.inner_html = AsyncMock(return_value="<div>content</div>")
+    mock_page.content = AsyncMock(return_value="<html><body></body></html>")
     mock_page.title = AsyncMock(return_value="Test")
     mock_page.close = AsyncMock()
     mock_page.url = url  # synchrone string-property in echte Playwright

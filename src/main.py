@@ -67,7 +67,7 @@ async def _run(
     from .exporter import export
     from .login import create_login_strategy
     from .scraper import scrape_pages
-    from .swagger import detect_and_fetch_swagger
+    from .swagger import SwaggerDetected, detect_and_fetch_swagger
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -98,9 +98,16 @@ async def _run(
         click.echo("🌐  Pagina's scrapen...")
         raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
     else:
-        # Stap 3+4 gecombineerd: login → discovery → scrapen in één browser-sessie
+        # Stap 3+4 gecombineerd: login → swagger check → discovery → scrapen
         pages = []
-        raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
+        try:
+            raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
+        except SwaggerDetected as exc:
+            click.echo("✅  Swagger/OpenAPI spec gevonden na inloggen — sla scraping over.")
+            click.echo(f"💾  Opslaan als {output} in {out_path}...")
+            export({"swagger": exc.result}, output, out_path)
+            click.echo("✅  Klaar!")
+            return
 
     # Stap 5: clean content via Claude API
     click.echo(f"🤖  Content opschonen via Claude ({len(raw_pages)} pagina's)...")

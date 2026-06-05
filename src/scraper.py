@@ -18,6 +18,7 @@ from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from .discovery import _is_html_url
 from .login import LoginStrategy, apply_login
+from .swagger import SwaggerDetected, detect_swagger_in_page
 
 # CSS selectors voor veelgebruikte collapsible elementen
 ACCORDION_SELECTORS = [
@@ -78,6 +79,19 @@ async def scrape_pages(
             login_page = await context.new_page()
             await apply_login(login_page, login_strategy, login_url)
             await login_page.close()
+
+        # Fase 1.5 — Swagger detectie na login
+        # Dekt Confluence embedded swagger en reguliere swagger achter login.
+        # Gooit SwaggerDetected zodat main.py de spec direct kan exporteren.
+        if start_url is not None and login_strategy.mode != "none":
+            _sw_page = await context.new_page()
+            try:
+                await _sw_page.goto(start_url, wait_until="domcontentloaded", timeout=30_000)
+                _swagger = await detect_swagger_in_page(_sw_page)
+                if _swagger:
+                    raise SwaggerDetected(_swagger)
+            finally:
+                await _sw_page.close()
 
         # Fase 2 — Discovery
         # Voor geauthenticeerde sessies: gebruik de browser (heeft auth-cookies).
