@@ -213,9 +213,22 @@ async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
     await _expand_accordions(page)
     await asyncio.sleep(0.5)
 
-    # inner_html('body') slaat de <head> over (CSS/scripts) zodat Claude
-    # alleen de zichtbare pagina-inhoud ontvangt.
-    html = await page.inner_html("body")
+    # Probeer semantische content-containers voor een kleinere, schonere HTML.
+    # main / article / [role='main'] zijn HTML5-standaard en worden door de
+    # meeste documentatiesites (Confluence, ReadTheDocs, GitBook, …) gebruikt.
+    # Fallback naar body als geen van de selectors iets substantieels oplevert.
+    html = ""
+    for selector in ("main", "article", "[role='main']"):
+        try:
+            candidate = await page.inner_html(selector)
+            if len(candidate) > 500:
+                html = candidate
+                break
+        except Exception:  # noqa: BLE001
+            pass
+    if not html:
+        html = await page.inner_html("body")
+
     title = await page.title()
     return ScrapedPage(url=url, html=html, title=title)
 
