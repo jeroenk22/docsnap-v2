@@ -1,7 +1,7 @@
 """Tests voor de exporter module."""
 import pytest
 
-from src.exporter import _url_to_filename, export
+from src.exporter import _spec_basename, _url_to_filename, export
 
 
 @pytest.fixture
@@ -96,3 +96,21 @@ def test_url_to_filename_max_length():
     long_url = "https://example.com/" + "a" * 200
     result = _url_to_filename(long_url)
     assert len(result) <= 100
+
+
+def test_spec_basename_uses_title_and_version():
+    """Bestandsnaam bevat title en version uit de spec."""
+    spec = {"openapi": "3.0.3", "info": {"title": "MendriX API", "version": "2025.3.66.7056"}}
+    assert _spec_basename(spec, "fallback") == "MendriX-API-2025.3.66.7056-openapi"
+
+
+def test_spec_basename_title_only():
+    """Werkt ook als alleen title aanwezig is."""
+    spec = {"info": {"title": "My API"}}
+    assert _spec_basename(spec, "fallback") == "My-API-openapi"
+
+
+def test_spec_basename_fallback_when_no_info():
+    """Valt terug op project_name als er geen info-blok is."""
+    assert _spec_basename({}, "myproject") == "myproject-openapi"
+    assert _spec_basename({"paths": {}}, "myproject") == "myproject-openapi"

@@ -103,21 +103,36 @@ def _export_swagger(swagger_result: dict, out_dir: Path, project_name: str) -> N
     fmt = swagger_result.get("format", "json")
     spec = swagger_result.get("spec", {})
 
+    base = _spec_basename(spec, project_name)
+
     if fmt == "yaml_raw":
-        out_file = out_dir / f"{project_name}-openapi.yaml"
+        out_file = out_dir / f"{base}.yaml"
         out_file.write_text(str(spec), encoding="utf-8")
     elif fmt == "yaml":
         import yaml  # type: ignore[import]
 
-        out_file = out_dir / f"{project_name}-openapi.yaml"
+        out_file = out_dir / f"{base}.yaml"
         out_file.write_text(yaml.dump(spec, allow_unicode=True), encoding="utf-8")
     else:
         import json
 
-        out_file = out_dir / f"{project_name}-openapi.json"
+        out_file = out_dir / f"{base}.json"
         out_file.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"✅  OpenAPI spec opgeslagen: {out_file}")
+
+
+def _spec_basename(spec: dict, fallback: str) -> str:
+    """Bouw bestandsnaam op uit spec info.title + info.version."""
+    info = spec.get("info", {}) if isinstance(spec, dict) else {}
+    title = str(info.get("title", "")).strip()
+    version = str(info.get("version", "")).strip()
+    if title or version:
+        raw = f"{title}-{version}" if (title and version) else (title or version)
+        safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in raw)
+        safe = safe.strip("-")
+        return f"{safe}-openapi"
+    return f"{fallback}-openapi"
 
 
 def _url_to_filename(url: str) -> str:
