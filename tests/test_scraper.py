@@ -130,11 +130,16 @@ async def test_browser_discover_pages_respects_path_prefix() -> None:
     ]
 
     mock_page = AsyncMock()
-    mock_page.goto = AsyncMock()
     mock_page.wait_for_load_state = AsyncMock()
     mock_page.close = AsyncMock()
-    # page.url is een synchrone string-property in Playwright (geen coroutine)
+    # page.url is een synchrone property in Playwright; simuleer dat de browser
+    # op de genavigeerde URL landt (geen redirect in deze test).
     mock_page.url = base_url
+
+    async def fake_goto(url: str, **kwargs: object) -> None:
+        mock_page.url = url  # update url zodat canonical == het genavigeerde adres
+
+    mock_page.goto = AsyncMock(side_effect=fake_goto)
     # Eerste aanroep (base_url zelf) geeft alle links terug; vervolgpagina's geven []
     mock_page.eval_on_selector_all = AsyncMock(side_effect=[all_links, [], []])
 
@@ -149,3 +154,39 @@ async def test_browser_discover_pages_respects_path_prefix() -> None:
     assert "https://support.example.com/space/VIS/other" not in discovered
     assert "https://support.example.com/home" not in discovered
     assert "https://other.com/page" not in discovered
+
+
+@pytest.mark.asyncio
+async def test_browser_discover_pages_deduplicates_redirect_variants() -> None:
+    """ID-URL en canonical-URL van dezelfde pagina tellen als één pagina."""
+    base_url = "https://docs.example.com/space/API"
+    id_url = "https://docs.example.com/space/API/12345"
+    canonical_url = "https://docs.example.com/space/API/12345/My+Page"
+
+    # Start pagina heeft links naar beide URL-vormen van dezelfde pagina
+    start_links = [id_url, canonical_url]
+
+    mock_page = AsyncMock()
+    mock_page.wait_for_load_state = AsyncMock()
+    mock_page.close = AsyncMock()
+    mock_page.url = base_url
+
+    # Simuleer de Confluence redirect: ID-URL wordt canonical-URL na navigatie
+    async def fake_goto(url: str, **kwargs: object) -> None:
+        if url == id_url:
+            mock_page.url = canonical_url  # redirect ID → canonical
+        else:
+            mock_page.url = url
+
+    mock_page.goto = AsyncMock(side_effect=fake_goto)
+    # Start pagina geeft beide links; canonical en volgende pagina's geven []
+    mock_page.eval_on_selector_all = AsyncMock(side_effect=[start_links, [], []])
+
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+
+    discovered = await _browser_discover_pages(mock_context, base_url)
+
+    # Canonical URL moet aanwezig zijn; ID en canonical mogen NIET allebei aanwezig zijn
+    assert canonical_url in discovered
+    assert id_url not in discovered  # ID-URL werd canonical — geen duplicaat

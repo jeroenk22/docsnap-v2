@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
@@ -104,6 +104,17 @@ async def scrape_pages(
     return results
 
 
+def _norm_url(url: str) -> str:
+    """Normaliseer URL voor deduplicatie.
+
+    Strips fragment en querystring, verwijdert trailing slash, lowercase
+    scheme en host, en decode percent-encoding in het pad (%20 vs spatie etc.).
+    Hierdoor worden URL-varianten van dezelfde pagina als één sleutel herkend.
+    """
+    p = urlparse(url.split("#")[0].split("?")[0].rstrip("/"))
+    return urlunparse((p.scheme.lower(), p.netloc.lower(), unquote(p.path), "", "", ""))
+
+
 async def _browser_discover_pages(
     context: BrowserContext,
     base_url: str,
@@ -111,37 +122,54 @@ async def _browser_discover_pages(
 ) -> list[str]:
     """BFS link discovery via een geauthenticeerde browser context.
 
-    Bezoekt base_url en volgt recursief alle interne HTML-links totdat
-    max_pages bereikt is.
+    Gebruikt de canonieke URL (page.url na redirect) als sleutel voor
+    deduplicatie zodat meerdere URL-vormen van dezelfde pagina — bijv.
+    een Confluence ID-URL die doorstuurt naar een titel-URL — als één
+    pagina worden geteld.
     """
     parsed = urlparse(base_url)
-    # Begrens de crawl tot het pad van de opgegeven URL zodat andere secties
-    # van hetzelfde domein niet worden meegenomen.
-    # Voorbeeld: base_url=/space/API → enkel /space/API en /space/API/…
-    # Voorbeeld: base_url=https://docs.example.com → base_path="" → heel domein
     base_path = parsed.path.rstrip("/")
-    visited: set[str] = set()
+
+    def _in_scope(u: str) -> bool:
+        path = urlparse(u).path
+        return path == base_path or path.startswith(base_path + "/")
+
+    seen: set[str] = set()     # genormaliseerde URLs die al gezien zijn
+    queued: set[str] = set()   # genormaliseerde URLs in de queue (O(1) dedup)
     queue: list[str] = [base_url]
+    result: list[str] = []     # canonieke URLs om te scrapen (één per unieke pagina)
+
+    queued.add(_norm_url(base_url))
 
     page = await context.new_page()
     try:
-        while queue and len(visited) < max_pages:
+        while queue and len(result) < max_pages:
             url = queue.pop(0)
-            if url in visited:
+            norm = _norm_url(url)
+            if norm in seen:
                 continue
-            visited.add(url)
-            print(f"   🔍 [{len(visited)}/{max_pages}] {url}")
+            seen.add(norm)
 
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 await page.wait_for_load_state("networkidle", timeout=10_000)
 
-                # Voeg de canonieke URL (na eventuele redirect) toe aan visited
-                # zodat dezelfde pagina niet opnieuw bezocht wordt via een
-                # alternatieve URL (bijv. Confluence ID-URL → titel-URL redirect).
+                # Gebruik de canonieke URL na redirect als definitieve URL voor
+                # deze pagina. Dit dekt ID-URL→titel-URL, trailing-slash
+                # normalisatie, en elke andere server-side redirect — generiek
+                # voor alle websites.
                 canonical = page.url.split("#")[0].split("?")[0].rstrip("/")
-                if canonical != url:
-                    visited.add(canonical)
+                norm_canonical = _norm_url(canonical)
+
+                if norm_canonical != norm:
+                    if norm_canonical in seen:
+                        # Pagina-inhoud al verwerkt via een andere URL-vorm
+                        continue
+                    seen.add(norm_canonical)
+
+                if _in_scope(canonical):
+                    result.append(canonical)
+                    print(f"   🔍 [{len(result)}/{max_pages}] {canonical}")
 
                 links: list[str] = await page.eval_on_selector_all(
                     "a[href]",
@@ -149,29 +177,23 @@ async def _browser_discover_pages(
                 )
                 for link in links:
                     clean = link.split("#")[0].split("?")[0].rstrip("/")
-                    link_path = urlparse(clean).path
+                    norm_clean = _norm_url(clean)
                     if (
                         clean
-                        and urlparse(clean).netloc == parsed.netloc
-                        and (link_path == base_path or link_path.startswith(base_path + "/"))
-                        and clean not in visited
-                        and clean not in queue
+                        and urlparse(clean).netloc.lower() == parsed.netloc.lower()
+                        and _in_scope(clean)
+                        and norm_clean not in seen
+                        and norm_clean not in queued
                         and _is_html_url(clean)
                     ):
                         queue.append(clean)
+                        queued.add(norm_clean)
             except Exception:  # noqa: BLE001
                 continue
     finally:
         await page.close()
 
-    # Houd alleen URLs die binnen de opgegeven pad-prefix vallen.
-    # Redirects naar buiten de prefix (bijv. /api/old → /changelog/new) worden
-    # wel als "bezocht" gemarkeerd zodat ze niet opnieuw bezocht worden, maar
-    # ze mogen niet in de scrape-lijst belanden.
-    return sorted(
-        u for u in visited
-        if urlparse(u).path == base_path or urlparse(u).path.startswith(base_path + "/")
-    )
+    return sorted(set(result))
 
 
 async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
