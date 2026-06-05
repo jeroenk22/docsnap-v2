@@ -1,7 +1,8 @@
 """Tests voor de CLI entry point (src/main.py)."""
+import pytest
 from click.testing import CliRunner
 
-from src.main import cli
+from src.main import _project_name_from_url, cli
 
 
 def test_cli_help():
@@ -40,3 +41,19 @@ def test_cli_valid_options():
     assert "--login" in result.output
     assert "--output" in result.output
     assert "--out-dir" in result.output
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://support.mendrix.nl/space/API", "API"),
+        ("https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3", "2025.3"),
+        ("https://docs.example.com/getting-started", "getting-started"),
+        ("https://docs.example.com/", "docs"),
+        ("https://docs.example.com", "docs"),
+        ("https://example.com/path with spaces", "path-with-spaces"),
+    ],
+)
+def test_project_name_from_url(url: str, expected: str) -> None:
+    """URL wordt correct omgezet naar een veilige projectnaam."""
+    assert _project_name_from_url(url) == expected

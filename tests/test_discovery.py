@@ -1,7 +1,9 @@
 """Tests voor sitemap/link discovery."""
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from src.discovery import _is_html_url, _parse_sitemap_xml
+from src.discovery import _is_html_url, _parse_sitemap_xml, discover_pages
 
 SAMPLE_SITEMAP = """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -56,6 +58,98 @@ def test_parse_sitemap_xml_filters_non_html():
 </urlset>"""
     urls = _parse_sitemap_xml(sitemap, "https://docs.example.com")
     assert urls == ["https://docs.example.com/guide"]
+
+
+# ---------------------------------------------------------------------------
+# Tests voor discover_pages (async, httpx gemockt)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_discover_pages_uses_sitemap_when_available() -> None:
+    """discover_pages gebruikt /sitemap.xml als die beschikbaar is."""
+    sitemap_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.example.com/page1</loc></url>
+  <url><loc>https://docs.example.com/page2</loc></url>
+</urlset>"""
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "application/xml"}
+    mock_resp.text = sitemap_xml
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.discovery.httpx.AsyncClient", return_value=mock_client):
+        result = await discover_pages("https://docs.example.com")
+
+    assert "https://docs.example.com/page1" in result
+    assert "https://docs.example.com/page2" in result
+
+
+@pytest.mark.asyncio
+async def test_discover_pages_falls_back_to_crawl_when_no_sitemap() -> None:
+    """discover_pages valt terug op link-crawl als er geen sitemap is."""
+    page_html = '<html><body><a href="/guide">Guide</a><a href="/api">API</a></body></html>'
+
+    no_sitemap_resp = MagicMock()
+    no_sitemap_resp.status_code = 404
+
+    page_resp = MagicMock()
+    page_resp.status_code = 200
+    page_resp.text = page_html
+
+    call_count = 0
+
+    async def fake_get(url: str, **kwargs: object) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        # First 3 calls are sitemap candidates → 404
+        if call_count <= 3:
+            return no_sitemap_resp
+        return page_resp
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=fake_get)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.discovery.httpx.AsyncClient", return_value=mock_client):
+        result = await discover_pages("https://docs.example.com")
+
+    assert isinstance(result, list)
+    assert "https://docs.example.com" in result
+
+
+@pytest.mark.asyncio
+async def test_discover_pages_respects_max_pages() -> None:
+    """discover_pages geeft maximaal max_pages resultaten terug."""
+    urls = "\n".join(
+        f"  <url><loc>https://docs.example.com/page{i}</loc></url>"
+        for i in range(100)
+    )
+    sitemap_xml = f"""<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{urls}
+</urlset>"""
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "application/xml"}
+    mock_resp.text = sitemap_xml
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.discovery.httpx.AsyncClient", return_value=mock_client):
+        result = await discover_pages("https://docs.example.com", max_pages=10)
+
+    assert len(result) <= 10
 
 
 @pytest.mark.parametrize(

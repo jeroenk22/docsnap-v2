@@ -52,7 +52,9 @@ def _export_combined_markdown(
     pages: list[dict], out_dir: Path, project_name: str
 ) -> None:
     """Exporteer alle pagina's als één gecombineerd Markdown bestand."""
-    out_file = out_dir / f"{project_name}.md"
+    md_dir = out_dir / "md"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    out_file = md_dir / f"{project_name}.md"
     parts = [f"# {project_name}\n\n_Gegenereerd door docsnap-v2_\n\n---\n\n"]
 
     for page in pages:
@@ -67,8 +69,8 @@ def _export_combined_markdown(
 
 def _export_per_file(pages: list[dict], out_dir: Path) -> None:
     """Exporteer elke pagina als apart Markdown bestand."""
-    files_dir = out_dir / "pages"
-    files_dir.mkdir(exist_ok=True)
+    files_dir = out_dir / "md" / "pages"
+    files_dir.mkdir(parents=True, exist_ok=True)
 
     for page in pages:
         filename = _url_to_filename(page["url"])
@@ -106,17 +108,23 @@ def _export_swagger(swagger_result: dict, out_dir: Path, project_name: str) -> N
     base = _spec_basename(spec, project_name)
 
     if fmt == "yaml_raw":
-        out_file = out_dir / f"{base}.yaml"
+        yaml_dir = out_dir / "yaml"
+        yaml_dir.mkdir(parents=True, exist_ok=True)
+        out_file = yaml_dir / f"{base}.yaml"
         out_file.write_text(str(spec), encoding="utf-8")
     elif fmt == "yaml":
         import yaml  # type: ignore[import]
 
-        out_file = out_dir / f"{base}.yaml"
+        yaml_dir = out_dir / "yaml"
+        yaml_dir.mkdir(parents=True, exist_ok=True)
+        out_file = yaml_dir / f"{base}.yaml"
         out_file.write_text(yaml.dump(spec, allow_unicode=True), encoding="utf-8")
     else:
         import json
 
-        out_file = out_dir / f"{base}.json"
+        json_dir = out_dir / "json"
+        json_dir.mkdir(parents=True, exist_ok=True)
+        out_file = json_dir / f"{base}.json"
         out_file.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"✅  OpenAPI spec opgeslagen: {out_file}")

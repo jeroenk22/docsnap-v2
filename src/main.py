@@ -72,13 +72,14 @@ async def _run(
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    project_name = _project_name_from_url(url)
     click.echo(f"🔍  Doelsite: {url}")
 
     # Stap 1: detecteer Swagger/OpenAPI — als gevonden, geen HTML scraping nodig
     swagger_result = await detect_and_fetch_swagger(url)
     if swagger_result:
         click.echo("✅  Swagger/OpenAPI spec gevonden — sla HTML scraping over.")
-        export({"swagger": swagger_result}, output, out_path)
+        export({"swagger": swagger_result}, output, out_path, project_name)
         return
 
     # Stap 2: maak login strategie aan
@@ -105,7 +106,7 @@ async def _run(
         except SwaggerDetected as exc:
             click.echo("✅  Swagger/OpenAPI spec gevonden na inloggen — sla scraping over.")
             click.echo(f"💾  Opslaan als {output} in {out_path}...")
-            export({"swagger": exc.result}, output, out_path)
+            export({"swagger": exc.result}, output, out_path, project_name)
             click.echo("✅  Klaar!")
             return
 
@@ -115,8 +116,19 @@ async def _run(
 
     # Stap 6: exporteer
     click.echo(f"💾  Opslaan als {output} in {out_path}...")
-    export(cleaned_pages, output, out_path)
+    export(cleaned_pages, output, out_path, project_name)
     click.echo("✅  Klaar!")
+
+
+def _project_name_from_url(url: str) -> str:
+    """Leid een leesbare projectnaam af van de start-URL."""
+    from urllib.parse import unquote, urlparse
+
+    p = urlparse(url)
+    parts = [s for s in p.path.strip("/").split("/") if s]
+    raw = unquote(parts[-1]) if parts else p.netloc.split(":")[0].split(".")[0]
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in raw)
+    return safe.strip("-") or "documentation"
 
 
 if __name__ == "__main__":
