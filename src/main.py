@@ -86,19 +86,21 @@ async def _run(
 
     # Stap 3: ontdek alle pagina's
     # Voor sites zonder login: snel via httpx/sitemap.
-    # Voor sites met login: httpx heeft geen auth-cookies en krijgt de loginpagina
-    # terug — discovery gebeurt dan via de browser na inloggen (in scrape_pages).
-    click.echo("📡  Pagina's ontdekken...")
+    # Voor sites met login: httpx heeft geen auth-cookies — discovery + scraping
+    # gebeuren samen in de geauthenticeerde browser-sessie (scrape_pages print
+    # zelf de fase-uitvoer).
     if login_strategy.mode == "none":
+        click.echo("📡  Pagina's ontdekken...")
         pages = await discover_pages(url)
         click.echo(f"   → {len(pages)} pagina's gevonden.")
-    else:
-        pages = []
-        click.echo("   → Via browser na inloggen (geauthenticeerde sessie).")
 
-    # Stap 4: scrape pagina's met Playwright
-    click.echo("🌐  Pagina's laden en content extraheren...")
-    raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
+        # Stap 4a: scrape (zonder login)
+        click.echo("🌐  Pagina's scrapen...")
+        raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
+    else:
+        # Stap 3+4 gecombineerd: login → discovery → scrapen in één browser-sessie
+        pages = []
+        raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
 
     # Stap 5: clean content via Claude API
     click.echo(f"🤖  Content opschonen via Claude ({len(raw_pages)} pagina's)...")

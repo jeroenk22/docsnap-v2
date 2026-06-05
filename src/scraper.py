@@ -72,25 +72,28 @@ async def scrape_pages(
             )
         )
 
-        # Login op de startpagina als nodig
+        # Fase 1 — Login
         if login_strategy.mode != "none" and (urls or start_url):
             login_url = start_url if start_url is not None else urls[0]
             login_page = await context.new_page()
             await apply_login(login_page, login_strategy, login_url)
             await login_page.close()
 
-        # Voor geauthenticeerde sessies: ontdek pagina's via de browser zodat
-        # JS-rendered nav en login-vereiste pagina's ook gevonden worden.
+        # Fase 2 — Discovery
+        # Voor geauthenticeerde sessies: gebruik de browser (heeft auth-cookies).
+        # Voor niet-geauthenticeerde sessies: urls zijn al ontdekt via httpx.
         if start_url is not None and login_strategy.mode != "none":
-            print(f"🔍  Browser discovery vanuit {start_url}...")
+            print("📡  Pagina's ontdekken via browser...")
             scrape_urls = await _browser_discover_pages(context, start_url)
             print(f"   → {len(scrape_urls)} pagina's gevonden.")
         else:
             scrape_urls = urls
 
+        # Fase 3 — Scrapen
+        print("🌐  Pagina's scrapen...")
         total = len(scrape_urls)
         for i, url in enumerate(scrape_urls, 1):
-            print(f"   🌐 [{i}/{total}] {url}")
+            print(f"   [{i}/{total}] {url}")
             try:
                 page = await context.new_page()
                 scraped = await _scrape_single_page(page, url)
@@ -151,8 +154,14 @@ async def _browser_discover_pages(
             seen.add(norm)
 
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 await page.wait_for_load_state("networkidle", timeout=10_000)
+
+                # Sla HTTP-foutpagina's (404, 403, 500 etc.) over — generiek voor
+                # elke website. Dode links of verwijderde pagina's worden zo niet
+                # in de scrape-lijst opgenomen.
+                if response is not None and response.status >= 400:
+                    continue
 
                 # Gebruik de canonieke URL na redirect als definitieve URL voor
                 # deze pagina. Dit dekt ID-URL→titel-URL, trailing-slash

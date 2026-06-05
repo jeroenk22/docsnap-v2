@@ -5,18 +5,23 @@ Gebruikt claude-haiku-4-5-20251001 (goedkoop, snel) om per pagina:
 - Navigatie, headers, footers en cookiebanners te verwijderen
 - Alleen de documentatie-inhoud te extraheren
 - De content te converteren naar schone Markdown
+
+Voor het aanroepen worden scripts, stijlen en binaire data uit de HTML
+gestript zodat het token-budget volledig naar documentatie-inhoud gaat.
 """
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 import anthropic
 
 from .scraper import ScrapedPage
 
 MODEL = "claude-haiku-4-5-20251001"
-MAX_HTML_CHARS = 50_000  # Begrens HTML om tokens te besparen
+MAX_HTML_CHARS = 100_000  # na pre-cleaning; body-only HTML is veel compacter
+MAX_RESPONSE_TOKENS = 8_192  # ruim genoeg voor pagina's met lange code blocks
 
 SYSTEM_PROMPT = """Je bent een HTML-naar-Markdown converter gespecialiseerd in documentatiesites.
 
@@ -25,10 +30,24 @@ Taak: Extraheer ALLEEN de documentatie-inhoud uit de gegeven HTML en converteer 
 Regels:
 - Verwijder: navigatiemenus, sidebars, headers, footers, cookiebanners, advertenties, breadcrumbs
 - Bewaar: alle technische inhoud, code blocks, tabellen, afbeeldingen (als alt-tekst), links
-- Converteer: koppen naar # ## ###, code naar ``` blocks, lijsten naar - of 1.
+- Code blocks: geef deze ALTIJD volledig en onafgekapt weer — nooit afkorten met "..." of "[rest van code]"
+- Converteer: koppen naar # ## ###, code naar ``` blocks met de juiste taal, lijsten naar - of 1.
 - Bewaar de hiërarchische structuur van de documentatie
 - Geef ALLEEN de Markdown terug, geen uitleg of toelichting
 - Als er geen documentatie-inhoud is (bijv. loginpagina), geef dan een lege string terug"""
+
+
+def _preprocess_html(html: str) -> str:
+    """Strip niet-inhoudelijke HTML voor efficiënter token-gebruik.
+
+    Verwijdert scripts, stijlen, SVGs en base64-data. De documentatie-inhoud
+    (tekst, koppen, code blocks, tabellen) blijft intact.
+    """
+    html = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r"<style\b[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r"<svg\b[^>]*>.*?</svg>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'data:[^"\';\s]+;base64,[A-Za-z0-9+/=]+', "", html)
+    return html
 
 
 async def clean_pages(pages: list[ScrapedPage], concurrency: int = 5) -> list[dict]:
@@ -65,11 +84,12 @@ async def _clean_single_page(
 ) -> dict:
     """Reinig één pagina via Claude API."""
     async with semaphore:
-        html_truncated = page.html[:MAX_HTML_CHARS]
+        html_preprocessed = _preprocess_html(page.html)
+        html_truncated = html_preprocessed[:MAX_HTML_CHARS]
 
         message = await client.messages.create(
             model=MODEL,
-            max_tokens=4096,
+            max_tokens=MAX_RESPONSE_TOKENS,
             system=SYSTEM_PROMPT,
             messages=[
                 {
