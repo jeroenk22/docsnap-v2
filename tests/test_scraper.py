@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.login import LoginStrategy
-from src.scraper import scrape_pages
+from src.scraper import _browser_discover_pages, scrape_pages
 
 
 def _make_login_strategy(mode: str = "form") -> LoginStrategy:
@@ -112,3 +112,37 @@ async def test_scrape_pages_uses_browser_discovery_when_authenticated() -> None:
 
     mock_discover.assert_called_once()
     assert len(results) == len(discovered)
+
+
+@pytest.mark.asyncio
+async def test_browser_discover_pages_respects_path_prefix() -> None:
+    """_browser_discover_pages volgt alleen links binnen het pad van base_url."""
+    base_url = "https://support.example.com/space/API"
+
+    # Pagina bevat links naar eigen space, andere space, en extern domein
+    all_links = [
+        "https://support.example.com/space/API/page-one",   # ✓ binnen prefix
+        "https://support.example.com/space/API/page-two",   # ✓ binnen prefix
+        "https://support.example.com/space/VIS/other",      # ✗ andere space
+        "https://support.example.com/home",                 # ✗ buiten prefix
+        "https://other.com/page",                           # ✗ ander domein
+    ]
+
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.wait_for_load_state = AsyncMock()
+    mock_page.close = AsyncMock()
+    # Eerste aanroep (base_url zelf) geeft alle links terug; vervolgpagina's geven []
+    mock_page.eval_on_selector_all = AsyncMock(side_effect=[all_links, [], []])
+
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+
+    discovered = await _browser_discover_pages(mock_context, base_url)
+
+    assert "https://support.example.com/space/API/page-one" in discovered
+    assert "https://support.example.com/space/API/page-two" in discovered
+    assert base_url in discovered  # de startpagina zelf
+    assert "https://support.example.com/space/VIS/other" not in discovered
+    assert "https://support.example.com/home" not in discovered
+    assert "https://other.com/page" not in discovered

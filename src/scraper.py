@@ -113,6 +113,11 @@ async def _browser_discover_pages(
     max_pages bereikt is.
     """
     parsed = urlparse(base_url)
+    # Begrens de crawl tot het pad van de opgegeven URL zodat andere secties
+    # van hetzelfde domein niet worden meegenomen.
+    # Voorbeeld: base_url=/space/API → enkel /space/API en /space/API/…
+    # Voorbeeld: base_url=https://docs.example.com → base_path="" → heel domein
+    base_path = parsed.path.rstrip("/")
     visited: set[str] = set()
     queue: list[str] = [base_url]
 
@@ -134,9 +139,11 @@ async def _browser_discover_pages(
                 )
                 for link in links:
                     clean = link.split("#")[0].split("?")[0].rstrip("/")
+                    link_path = urlparse(clean).path
                     if (
                         clean
                         and urlparse(clean).netloc == parsed.netloc
+                        and (link_path == base_path or link_path.startswith(base_path + "/"))
                         and clean not in visited
                         and clean not in queue
                         and _is_html_url(clean)
