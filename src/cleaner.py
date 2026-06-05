@@ -61,6 +61,10 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[di
     Returns:
         Lijst van dicts met url, title en markdown.
     """
+    if not pages:
+        return []
+
+    total = len(pages)
     semaphore = asyncio.Semaphore(concurrency)
     # max_retries=6: SDK voert exponentiële backoff uit bij 429 (rate limit)
     # en 529 (overloaded) — tot ~64 seconden wachttijd per poging.
@@ -69,7 +73,18 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[di
         max_retries=6,
     )
 
-    tasks = [_clean_single_page(client, semaphore, page) for page in pages]
+    # Gedeelde teller — veilig binnen één event-loop (geen threading).
+    completed: list[int] = [0]
+
+    async def _clean_and_report(page: ScrapedPage) -> dict:
+        result = await _clean_single_page(client, semaphore, page)
+        completed[0] += 1
+        n = len(result.get("markdown", "").strip())
+        label = "⚠️  leeg" if n == 0 else f"{n} tekens"
+        print(f"   [{completed[0]}/{total}] {result['url'][:70]}  → {label}")
+        return result
+
+    tasks = [_clean_and_report(page) for page in pages]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     cleaned = []
@@ -79,6 +94,17 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[di
             cleaned.append({"url": page.url, "title": page.title, "markdown": ""})
         else:
             cleaned.append(result)
+
+    # Samenvatting — verdachte pagina's direct zichtbaar
+    empty = [c for c in cleaned if not c["markdown"].strip()]
+    ok = total - len(empty)
+    print(f"\n   → {ok}/{total} pagina's succesvol opgeschoond.", end="")
+    if empty:
+        print(f"  ⚠️  {len(empty)} zonder content:")
+        for c in empty:
+            print(f"        {c['url']}")
+    else:
+        print()
 
     return cleaned
 

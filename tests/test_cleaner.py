@@ -1,10 +1,10 @@
 """Tests voor de Claude API content cleaner."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.cleaner import _clean_single_page
+from src.cleaner import _clean_single_page, clean_pages
 from src.scraper import ScrapedPage
 
 
@@ -82,3 +82,41 @@ async def test_clean_single_page_html_truncated(sample_page: ScrapedPage) -> Non
     user_content = captured_calls[0]["messages"][0]["content"]
     # HTML in de content mag niet groter zijn dan MAX_HTML_CHARS
     assert len(user_content) <= MAX_HTML_CHARS + 500  # header tekst erbij
+
+
+@pytest.mark.asyncio
+async def test_clean_pages_reports_progress_and_summary(capsys) -> None:
+    """clean_pages print per-pagina progress en eindtotaal."""
+    pages = [
+        ScrapedPage(url="https://docs.example.com/a", html="<main>content a</main>", title="A"),
+        ScrapedPage(url="https://docs.example.com/b", html="<main>content b</main>", title="B"),
+        ScrapedPage(url="https://docs.example.com/empty", html="<main></main>", title="Empty"),
+    ]
+
+    call_count = [0]
+
+    async def fake_create(**kwargs):
+        call_count[0] += 1
+        msg = MagicMock()
+        # Derde pagina geeft lege response (loginpagina / geen content)
+        msg.content = [MagicMock(text="" if call_count[0] == 3 else "# Content")]
+        return msg
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = fake_create
+
+    with patch("src.cleaner.anthropic.AsyncAnthropic", return_value=mock_client):
+        result = await clean_pages(pages, concurrency=3)
+
+    out = capsys.readouterr().out
+    assert "[1/3]" in out or "[2/3]" in out  # progress zichtbaar
+    assert "2/3" in out  # samenvatting: 2 van 3 ok
+    assert "https://docs.example.com/empty" in out  # lege pagina gemarkeerd
+    assert len(result) == 3
+
+
+@pytest.mark.asyncio
+async def test_clean_pages_empty_input() -> None:
+    """clean_pages met lege lijst geeft lege lijst terug zonder crash."""
+    result = await clean_pages([])
+    assert result == []
