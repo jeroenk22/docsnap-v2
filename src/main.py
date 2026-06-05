@@ -91,7 +91,7 @@ async def _run(
 
     # Stap 4: scrape pagina's met Playwright
     click.echo("🌐  Pagina's laden en content extraheren...")
-    raw_pages = await scrape_pages(pages, login_strategy)
+    raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
 
     # Stap 5: clean content via Claude API
     click.echo(f"🤖  Content opschonen via Claude ({len(raw_pages)} pagina's)...")

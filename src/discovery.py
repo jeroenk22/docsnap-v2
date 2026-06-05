@@ -13,6 +13,20 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+_NON_HTML_EXTENSIONS = frozenset(
+    ".png .jpg .jpeg .gif .webp .svg .ico "
+    ".css .js .mjs .ts "
+    ".woff .woff2 .ttf .eot "
+    ".pdf .zip .tar .gz .xml .json .yaml .yml".split()
+)
+
+
+def _is_html_url(url: str) -> bool:
+    """Return True als de URL waarschijnlijk een HTML-pagina is."""
+    path = urlparse(url).path.lower()
+    _, _, ext = path.rpartition(".")
+    return not ext or f".{ext}" not in _NON_HTML_EXTENSIONS
+
 
 async def discover_pages(base_url: str, max_pages: int = 500) -> list[str]:
     """Ontdek alle pagina's op de documentatiesite.
@@ -64,7 +78,10 @@ def _parse_sitemap_xml(xml_content: str, base_url: str) -> list[str]:
     """
     parsed = urlparse(base_url)
     urls = re.findall(r"<loc>(https?://[^<]+)</loc>", xml_content)
-    return [u for u in urls if urlparse(u).netloc == parsed.netloc]
+    return [
+        u for u in urls
+        if urlparse(u).netloc == parsed.netloc and _is_html_url(u)
+    ]
 
 
 async def _crawl_nav_links(base_url: str, max_pages: int) -> list[str]:
@@ -87,7 +104,7 @@ async def _crawl_nav_links(base_url: str, max_pages: int) -> list[str]:
                 links = re.findall(r'href="(/[^"#?]*)"', resp.text)
                 for link in links:
                     full_url = urljoin(origin, link)
-                    if full_url not in visited and full_url not in queue:
+                    if full_url not in visited and full_url not in queue and _is_html_url(full_url):
                         queue.append(full_url)
             except httpx.RequestError:
                 continue

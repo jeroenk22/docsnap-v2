@@ -40,6 +40,7 @@ async def scrape_pages(
     urls: list[str],
     login_strategy: LoginStrategy,
     headless: bool | None = None,
+    start_url: str | None = None,
 ) -> list[ScrapedPage]:
     """Scrape een lijst van URLs en geef de volledige HTML terug.
 
@@ -47,6 +48,7 @@ async def scrape_pages(
         urls:           Te scrapen pagina's.
         login_strategy: Login configuratie.
         headless:       Als None, automatisch bepaald op basis van login mode.
+        start_url:      URL voor login; valt terug op urls[0] als None.
 
     Returns:
         Lijst van ScrapedPage objecten.
@@ -66,10 +68,11 @@ async def scrape_pages(
             )
         )
 
-        # Login op de eerste pagina als nodig
+        # Login op de startpagina als nodig
         if login_strategy.mode != "none" and urls:
+            login_url = start_url if start_url is not None else urls[0]
             login_page = await context.new_page()
-            await apply_login(login_page, login_strategy, urls[0])
+            await apply_login(login_page, login_strategy, login_url)
             await login_page.close()
 
         for url in urls:
