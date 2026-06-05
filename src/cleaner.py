@@ -38,9 +38,20 @@ Regels:
 
 
 def _fmt_url(url: str, max_len: int = 60) -> str:
-    """Afgekapte URL met OSC 8 hyperlink voor Ctrl+Click in terminal."""
-    display = url if len(url) <= max_len else url[:max_len - 3] + "..."
-    return f"\033]8;;{url}\033\\{display}\033]8;;\033\\"
+    """OSC 8 hyperlink — toont paginanaam als label, OSC 8 bevat de volledige URL.
+
+    Door alleen het pad-segment te tonen (geen 'https://') pakt VS Code de
+    display-tekst niet op als URL, waardoor Ctrl+Click de volledige URL opent.
+    """
+    from urllib.parse import unquote, urlparse
+
+    path = urlparse(url).path.rstrip("/")
+    label = unquote(path.split("/")[-1]) if path else urlparse(url).netloc
+    if not label:
+        label = urlparse(url).netloc
+    if len(label) > max_len:
+        label = label[:max_len - 3] + "..."
+    return f"\033]8;;{url}\033\\{label}\033]8;;\033\\"
 
 
 def _preprocess_html(html: str) -> str:
