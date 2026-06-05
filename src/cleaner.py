@@ -81,7 +81,7 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 3) -> list[di
         completed[0] += 1
         n = len(result.get("markdown", "").strip())
         label = "⚠️  leeg" if n == 0 else f"{n} tekens"
-        print(f"   [{completed[0]}/{total}] {result['url'][:70]}  → {label}")
+        print(f"   [{completed[0]}/{total}] {result['url']}  → {label}")
         return result
 
     tasks = [_clean_and_report(page) for page in pages]
