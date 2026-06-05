@@ -164,7 +164,14 @@ async def _browser_discover_pages(
     finally:
         await page.close()
 
-    return sorted(visited)
+    # Houd alleen URLs die binnen de opgegeven pad-prefix vallen.
+    # Redirects naar buiten de prefix (bijv. /api/old → /changelog/new) worden
+    # wel als "bezocht" gemarkeerd zodat ze niet opnieuw bezocht worden, maar
+    # ze mogen niet in de scrape-lijst belanden.
+    return sorted(
+        u for u in visited
+        if urlparse(u).path == base_path or urlparse(u).path.startswith(base_path + "/")
+    )
 
 
 async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
