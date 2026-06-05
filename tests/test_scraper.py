@@ -4,7 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.login import LoginStrategy
-from src.scraper import _browser_discover_pages, _scrape_single_page, scrape_pages
+from src.scraper import (
+    _browser_discover_pages,
+    _httpx_has_bot_challenge,
+    _is_bot_challenge,
+    _scrape_single_page,
+    _wait_for_challenge_solved,
+    scrape_pages,
+)
 
 
 def _make_login_strategy(mode: str = "form") -> LoginStrategy:
@@ -88,9 +95,11 @@ async def test_scrape_pages_falls_back_to_urls0_when_no_start_url() -> None:
     with (
         patch("src.scraper.async_playwright", return_value=mock_pw),
         patch("src.scraper.apply_login", side_effect=fake_apply_login),
+        patch("src.scraper._httpx_has_bot_challenge", return_value=False),
     ):
         # Geen start_url → geen browser discovery, scrape_urls = urls
-        await scrape_pages(urls, login_strategy, headless=True)
+        # headless=None zodat regel 63 (automatische bepaling) geraakt wordt
+        await scrape_pages(urls, login_strategy, headless=None)
 
     assert captured_login_urls == [urls[0]]
 
@@ -236,3 +245,148 @@ async def test_scrape_single_page_falls_back_to_body() -> None:
     result = await _scrape_single_page(mock_page, "https://docs.example.com/page")
 
     assert result.html == body_html
+
+
+# ---------------------------------------------------------------------------
+# Tests voor bot-challenge detectie
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_scrape_pages_logs_error_when_scraping_fails() -> None:
+    """scrape_pages logt een waarschuwing als een pagina niet gescraped kan worden."""
+    urls = ["https://docs.example.com/page"]
+    login_strategy = _make_login_strategy(mode="none")
+
+    mock_page = _make_mock_page()
+    mock_pw, _ = _make_mock_playwright(mock_page)
+
+    with (
+        patch("src.scraper.async_playwright", return_value=mock_pw),
+        patch("src.scraper._httpx_has_bot_challenge", return_value=False),
+        patch(
+            "src.scraper._scrape_single_page",
+            side_effect=Exception("connection refused"),
+        ),
+    ):
+        results = await scrape_pages(urls, login_strategy, headless=True)
+
+    assert results == []
+
+
+def test_is_bot_challenge_cloudflare():
+    """Cloudflare challenge-pagina wordt herkend."""
+    html = "<title>Just a moment...</title><p>Enable JavaScript and cookies to continue</p>"
+    assert _is_bot_challenge(html)
+
+
+def test_is_bot_challenge_hcaptcha():
+    """hCaptcha-pagina wordt herkend."""
+    html = '<script src="https://hcaptcha.com/1/api.js"></script>'
+    assert _is_bot_challenge(html)
+
+
+def test_is_bot_challenge_recaptcha():
+    """reCAPTCHA-pagina wordt herkend."""
+    html = '<script src="https://www.google.com/recaptcha/api.js"></script>'
+    assert _is_bot_challenge(html)
+
+
+def test_is_bot_challenge_normal_page():
+    """Gewone documentatiepagina wordt NIET herkend als challenge."""
+    html = "<html><body><h1>API Reference</h1><p>Docs here.</p></body></html>"
+    assert not _is_bot_challenge(html)
+
+
+@pytest.mark.asyncio
+async def test_httpx_has_bot_challenge_detects_challenge() -> None:
+    """_httpx_has_bot_challenge retourneert True voor een Cloudflare-pagina."""
+    mock_resp = MagicMock()
+    mock_resp.text = "Just a moment... Enable JavaScript and cookies to continue"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await _httpx_has_bot_challenge("https://example.com")
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_httpx_has_bot_challenge_returns_false_for_normal_page() -> None:
+    """_httpx_has_bot_challenge retourneert False voor gewone pagina."""
+    mock_resp = MagicMock()
+    mock_resp.text = "<html><body><h1>Docs</h1></body></html>"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await _httpx_has_bot_challenge("https://example.com")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_challenge_solved_returns_when_challenge_gone() -> None:
+    """_wait_for_challenge_solved keert terug zodra de challenge weg is."""
+    call_count = 0
+
+    async def fake_content() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            return "<title>Just a moment...</title><p>Enable JavaScript and cookies to continue</p>"
+        return "<html><body><h1>Docs</h1></body></html>"
+
+    mock_page = AsyncMock()
+    mock_page.content = AsyncMock(side_effect=fake_content)
+
+    await _wait_for_challenge_solved(mock_page, timeout=10)
+    assert call_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_scrape_pages_detects_bot_challenge_and_opens_headed() -> None:
+    """scrape_pages opent headed browser als bot-bescherming gedetecteerd wordt."""
+    mock_page = _make_mock_page()
+    # Eerste aanroep (Fase 0.5 challenge check) → challenge-pagina,
+    # zodat _is_bot_challenge True retourneert en _wait_for_challenge_solved aangeroepen wordt.
+    # Tweede aanroep (scrapen zelf) → gewone HTML.
+    mock_page.content = AsyncMock(
+        side_effect=[
+            "Just a moment... Enable JavaScript and cookies to continue",
+            "<html><body><h1>Docs</h1></body></html>",
+        ]
+    )
+    mock_pw, _ = _make_mock_playwright(mock_page)
+
+    launched_headless_values: list[bool] = []
+
+    original_launch = mock_pw.chromium.launch
+
+    async def capturing_launch(**kwargs: object) -> object:
+        launched_headless_values.append(kwargs.get("headless", True))
+        return await original_launch(**kwargs)
+
+    mock_pw.chromium.launch = AsyncMock(side_effect=capturing_launch)
+
+    with (
+        patch("src.scraper.async_playwright", return_value=mock_pw),
+        patch("src.scraper.apply_login"),
+        patch("src.scraper._httpx_has_bot_challenge", return_value=True),
+        patch("src.scraper._wait_for_challenge_solved"),
+    ):
+        login_strategy = _make_login_strategy(mode="none")
+        await scrape_pages(
+            ["https://docs.example.com/page"],
+            login_strategy,
+            headless=True,
+            start_url="https://docs.example.com",
+        )
+
+    assert launched_headless_values == [False]

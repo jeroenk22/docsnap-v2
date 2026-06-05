@@ -62,6 +62,15 @@ async def scrape_pages(
     if headless is None:
         headless = login_strategy.mode != "manual"
 
+    # Probe: controleer of de startpagina bot-bescherming heeft.
+    # Als ja, schakel over naar headed mode zodat de gebruiker de challenge kan oplossen.
+    probe_url = start_url or (urls[0] if urls else None)
+    bot_challenge_detected = headless and bool(probe_url) and await _httpx_has_bot_challenge(probe_url)
+    if bot_challenge_detected:
+        print("🤖  Bot-bescherming gedetecteerd (Cloudflare/CAPTCHA).")
+        print("   Browser opent zichtbaar — los de challenge op in de browser.")
+        headless = False
+
     results: list[ScrapedPage] = []
 
     async with async_playwright() as pw:
@@ -81,6 +90,22 @@ async def scrape_pages(
         await context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+
+        # Fase 0.5 — Wacht op challenge-oplossing als bot-bescherming gedetecteerd
+        if bot_challenge_detected and probe_url:
+            _ch_page = await context.new_page()
+            try:
+                await _ch_page.goto(probe_url, wait_until="domcontentloaded", timeout=30_000)
+                try:
+                    await _ch_page.wait_for_load_state("networkidle", timeout=5_000)
+                except Exception:  # noqa: BLE001
+                    pass
+                if _is_bot_challenge(await _ch_page.content()):
+                    print("   Wachten tot challenge opgelost is...")
+                    await _wait_for_challenge_solved(_ch_page)
+                print("   ✅  Challenge opgelost — verder met scrapen.")
+            finally:
+                await _ch_page.close()
 
         # Fase 1 — Login
         if login_strategy.mode != "none" and (urls or start_url):
@@ -280,6 +305,51 @@ async def _scroll_to_bottom(page: Page, step: int = 800, delay: float = 0.2) -> 
         scroll_height = new_height
 
     await page.evaluate("window.scrollTo(0, 0)")
+
+
+def _is_bot_challenge(html: str) -> bool:
+    """Detecteer generieke bot-bescherming (Cloudflare, hCaptcha, reCAPTCHA, etc.)."""
+    indicators = [
+        "cf-browser-verification",
+        "cf_chl_opt",
+        "just a moment",
+        "enable javascript and cookies to continue",
+        "checking if the site connection is secure",
+        "hcaptcha.com/1/api.js",
+        "recaptcha/api.js",
+        "verify you are human",
+        "verify you're human",
+        "i am not a robot",
+    ]
+    lower = html.lower()
+    return any(ind in lower for ind in indicators)
+
+
+async def _httpx_has_bot_challenge(url: str) -> bool:
+    """Snel via httpx controleren of de pagina bot-bescherming heeft.
+
+    httpx heeft geen JS, waardoor Cloudflare-pagina's altijd de challenge
+    teruggeven — ideaal als snelle probe zonder Playwright te starten.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url)
+            return _is_bot_challenge(resp.text)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _wait_for_challenge_solved(page: Page, timeout: int = 120) -> None:
+    """Wacht (polling) tot de bot-challenge-pagina verdwenen is."""
+    for _ in range(timeout):
+        await asyncio.sleep(1)
+        try:
+            if not _is_bot_challenge(await page.content()):
+                return
+        except Exception:  # noqa: BLE001
+            return
 
 
 async def _expand_accordions(page: Page) -> None:
