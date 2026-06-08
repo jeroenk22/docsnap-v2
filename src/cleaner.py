@@ -20,7 +20,7 @@ import anthropic
 from .scraper import ScrapedPage
 
 MODEL = "claude-haiku-4-5-20251001"
-MAX_HTML_CHARS = 200_000  # na pre-cleaning; Haiku heeft 200K context
+MAX_HTML_CHARS = 150_000  # na pre-cleaning; ~37.5K tokens, veilig onder 50K tokens/min limit
 MAX_RESPONSE_TOKENS = 8_192  # ruim genoeg voor pagina's met lange code blocks
 
 SYSTEM_PROMPT = """Je bent een HTML-naar-Markdown converter gespecialiseerd in documentatiesites.
