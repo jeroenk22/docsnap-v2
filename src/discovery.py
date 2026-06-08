@@ -67,20 +67,27 @@ async def _try_sitemap(base_url: str) -> list[str]:
 
 
 def _parse_sitemap_xml(xml_content: str, base_url: str) -> list[str]:
-    """Extraheer URLs uit sitemap XML.
+    """Extraheer URLs uit sitemap XML die binnen het pad van base_url vallen.
 
     Args:
         xml_content: De raw XML inhoud.
-        base_url:    De basis URL (voor domeinfiltering).
+        base_url:    De basis URL (voor domein- en padprefix-filtering).
 
     Returns:
-        Lijst van URLs op hetzelfde domein als base_url.
+        Lijst van URLs op hetzelfde domein én binnen het pad van base_url.
     """
     parsed = urlparse(base_url)
+    base_path = parsed.path.rstrip("/")
     urls = re.findall(r"<loc>(https?://[^<]+)</loc>", xml_content)
     return [
         u for u in urls
-        if urlparse(u).netloc == parsed.netloc and _is_html_url(u)
+        if urlparse(u).netloc == parsed.netloc
+        and _is_html_url(u)
+        and (
+            not base_path
+            or urlparse(u).path == base_path
+            or urlparse(u).path.startswith(base_path + "/")
+        )
     ]
 
 
@@ -90,6 +97,11 @@ async def _crawl_nav_links(base_url: str, max_pages: int) -> list[str]:
     queue: list[str] = [base_url]
     parsed_base = urlparse(base_url)
     origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
+    base_path = parsed_base.path.rstrip("/")
+
+    def _in_scope(url: str) -> bool:
+        path = urlparse(url).path
+        return not base_path or path == base_path or path.startswith(base_path + "/")
 
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         while queue and len(visited) < max_pages:
@@ -104,7 +116,12 @@ async def _crawl_nav_links(base_url: str, max_pages: int) -> list[str]:
                 links = re.findall(r'href="(/[^"#?]*)"', resp.text)
                 for link in links:
                     full_url = urljoin(origin, link)
-                    if full_url not in visited and full_url not in queue and _is_html_url(full_url):
+                    if (
+                        full_url not in visited
+                        and full_url not in queue
+                        and _is_html_url(full_url)
+                        and _in_scope(full_url)
+                    ):
                         queue.append(full_url)
             except httpx.RequestError:
                 continue

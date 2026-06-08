@@ -22,6 +22,22 @@ def test_parse_sitemap_xml_returns_urls():
     assert "https://docs.example.com/api/overview" in urls
 
 
+def test_parse_sitemap_xml_filters_by_path_prefix():
+    """Sitemap URLs buiten het padprefix van base_url worden gefilterd."""
+    sitemap = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.example.com/documentation-v3/guide</loc></url>
+  <url><loc>https://docs.example.com/documentation-v3/api</loc></url>
+  <url><loc>https://docs.example.com/blog/post1</loc></url>
+  <url><loc>https://docs.example.com/</loc></url>
+</urlset>"""
+    urls = _parse_sitemap_xml(sitemap, "https://docs.example.com/documentation-v3")
+    assert "https://docs.example.com/documentation-v3/guide" in urls
+    assert "https://docs.example.com/documentation-v3/api" in urls
+    assert "https://docs.example.com/blog/post1" not in urls
+    assert "https://docs.example.com/" not in urls
+
+
 def test_parse_sitemap_xml_filters_external_domains():
     """URLs van andere domeinen worden gefilterd."""
     with_external = SAMPLE_SITEMAP.replace(
