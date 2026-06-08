@@ -74,16 +74,29 @@ async def scrape_pages(
     results: list[ScrapedPage] = []
 
     async with async_playwright() as pw:
-        browser: Browser = await pw.chromium.launch(
-            headless=headless,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        # Bij een bot-challenge: gebruik de echte Chrome-browser van de gebruiker
+        # (channel="chrome"). Chrome heeft een echte fingerprint (GPU, fonts,
+        # extensies) die bot-detectie zoals Cloudflare vertrouwt. Chromium mist dit.
+        # Voor headless sessies zonder challenge volstaat Chromium.
+        if bot_challenge_detected:
+            try:
+                browser = await pw.chromium.launch(
+                    headless=False,
+                    channel="chrome",
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+            except Exception:  # noqa: BLE001
+                # Chrome niet geïnstalleerd — val terug op Chromium headed
+                browser = await pw.chromium.launch(
+                    headless=False,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+        else:
+            browser = await pw.chromium.launch(
+                headless=headless,
+                args=["--disable-blink-features=AutomationControlled"],
             )
-        )
+        context = await browser.new_context()
         # Verberg automation-markeringen die Cloudflare en andere bot-detectie
         # triggeren. navigator.webdriver is altijd 'true' in een standaard
         # Playwright-browser; dit script overschrijft dat vóór elke paginalading.
@@ -263,11 +276,20 @@ async def _browser_discover_pages(
 
 async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
     """Laad één pagina volledig en geef de HTML terug."""
-    await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+    # networkidle wacht op Cloudflare-redirect-chains; timeout is niet-fataal
+    # zodat sites met continue achtergrond-requests ook werken.
     try:
-        await page.wait_for_load_state("networkidle", timeout=10_000)
+        await page.goto(url, wait_until="networkidle", timeout=30_000)
     except Exception:  # noqa: BLE001
-        pass  # content is geladen; continue background requests zijn geen probleem
+        pass
+
+    # Detecteer en wacht op per-pagina bot-challenge (bijv. Cloudflare op subpagina's)
+    try:
+        if _is_bot_challenge(await page.content()):
+            await _wait_for_challenge_solved(page, timeout=60)
+            await asyncio.sleep(1)
+    except Exception:  # noqa: BLE001
+        pass
     await _scroll_to_bottom(page)
     await _expand_accordions(page)
     await asyncio.sleep(0.5)

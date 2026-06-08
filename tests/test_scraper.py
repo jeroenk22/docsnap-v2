@@ -211,6 +211,7 @@ async def test_scrape_single_page_uses_main_selector_when_available() -> None:
     mock_page.evaluate = AsyncMock(return_value=0)
     mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
     mock_page.title = AsyncMock(return_value="Test Page")
+    mock_page.content = AsyncMock(return_value="<html><body></body></html>")
 
     main_html = "<h1>Docs</h1>" + "x" * 600  # > 500 chars — substantieel
     mock_page.inner_html = AsyncMock(return_value=main_html)
@@ -231,6 +232,7 @@ async def test_scrape_single_page_falls_back_to_body() -> None:
     mock_page.evaluate = AsyncMock(return_value=0)
     mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
     mock_page.title = AsyncMock(return_value="Test Page")
+    mock_page.content = AsyncMock(return_value="<html><body></body></html>")
 
     body_html = "<div>full body content</div>" + "x" * 600
 
@@ -245,6 +247,44 @@ async def test_scrape_single_page_falls_back_to_body() -> None:
     result = await _scrape_single_page(mock_page, "https://docs.example.com/page")
 
     assert result.html == body_html
+
+
+@pytest.mark.asyncio
+async def test_scrape_single_page_waits_for_bot_challenge() -> None:
+    """_scrape_single_page wacht op bot-challenge als de pagina er één toont."""
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.evaluate = AsyncMock(return_value=0)
+    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.title = AsyncMock(return_value="Test Page")
+    mock_page.inner_html = AsyncMock(return_value="<h1>Docs</h1>" + "x" * 600)
+    # Eerste aanroep → challenge-pagina; tweede aanroep (in _wait_for_challenge_solved) → gewoon
+    mock_page.content = AsyncMock(
+        side_effect=[
+            "Just a moment... Enable JavaScript and cookies to continue",
+            "<html><body><h1>Docs</h1></body></html>",
+        ]
+    )
+
+    with patch("src.scraper._wait_for_challenge_solved", new_callable=AsyncMock) as mock_wait:
+        await _scrape_single_page(mock_page, "https://docs.example.com/page")
+
+    mock_wait.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scrape_single_page_handles_content_exception() -> None:
+    """_scrape_single_page crasht niet als page.content() een exception gooit."""
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.content = AsyncMock(side_effect=Exception("page closed"))
+    mock_page.evaluate = AsyncMock(return_value=0)
+    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.title = AsyncMock(return_value="Test")
+    mock_page.inner_html = AsyncMock(return_value="<h1>Docs</h1>" + "x" * 600)
+
+    result = await _scrape_single_page(mock_page, "https://docs.example.com/page")
+    assert result is not None
 
 
 # ---------------------------------------------------------------------------
