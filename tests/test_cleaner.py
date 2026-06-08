@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.cleaner import _clean_single_page, clean_pages
+from src.cleaner import _clean_single_page, _split_html_into_chunks, clean_pages
 from src.scraper import ScrapedPage
 
 
@@ -58,10 +58,11 @@ async def test_clean_single_page_empty_response(sample_page: ScrapedPage) -> Non
 
 
 @pytest.mark.asyncio
-async def test_clean_single_page_html_truncated(sample_page: ScrapedPage) -> None:
-    """Grote HTML wordt afgekapt voordat het naar Claude gaat."""
+async def test_clean_single_page_large_html_uses_chunking(sample_page: ScrapedPage) -> None:
+    """Grote HTML wordt in meerdere chunks verwerkt (één Claude-call per chunk)."""
     from src.cleaner import MAX_HTML_CHARS
 
+    # Geen headings → 2 raw chunks (MAX_HTML_CHARS + 10_000 tekens)
     sample_page.html = "x" * (MAX_HTML_CHARS + 10_000)
 
     captured_calls: list = []
@@ -69,19 +70,84 @@ async def test_clean_single_page_html_truncated(sample_page: ScrapedPage) -> Non
     async def capture_call(**kwargs: object) -> MagicMock:
         captured_calls.append(kwargs)
         msg = MagicMock()
-        msg.content = [MagicMock(text="# Truncated")]
+        msg.content = [MagicMock(text=f"# Part {len(captured_calls)}")]
         return msg
 
     mock_client = AsyncMock()
     mock_client.messages.create = capture_call
 
     semaphore = asyncio.Semaphore(1)
-    await _clean_single_page(mock_client, semaphore, sample_page)
+    result = await _clean_single_page(mock_client, semaphore, sample_page)
 
-    assert len(captured_calls) == 1
-    user_content = captured_calls[0]["messages"][0]["content"]
-    # HTML in de content mag niet groter zijn dan MAX_HTML_CHARS
-    assert len(user_content) <= MAX_HTML_CHARS + 500  # header tekst erbij
+    # 2 Claude-calls: één per chunk
+    assert len(captured_calls) == 2
+    # Resulterende markdown bevat beide parts samengevoegd
+    assert "# Part 1" in result["markdown"]
+    assert "# Part 2" in result["markdown"]
+
+
+# ---------------------------------------------------------------------------
+# Tests voor _split_html_into_chunks
+# ---------------------------------------------------------------------------
+
+def test_split_html_small_input_returns_single_chunk() -> None:
+    """HTML kleiner dan max_chars geeft één chunk terug."""
+    html = "<h1>Title</h1><p>Content</p>"
+    chunks = _split_html_into_chunks(html, max_chars=1000)
+    assert chunks == [html]
+
+
+def test_split_html_splits_at_heading_boundary() -> None:
+    """Grote HTML wordt gesplitst vlak vóór heading-tags."""
+    intro = "x" * 100
+    section_a = "<h2>Section A</h2>" + "a" * 100
+    section_b = "<h2>Section B</h2>" + "b" * 100
+    html = intro + section_a + section_b  # 336 tekens totaal
+
+    # max_chars=150: elke chunk splitst bij de volgende heading-positie
+    # chunk1 = intro(100), chunk2 = section_a(118), chunk3 = section_b(118)
+    chunks = _split_html_into_chunks(html, max_chars=150)
+    assert len(chunks) == 3
+    assert "x" * 100 == chunks[0]
+    assert "<h2>Section A</h2>" in chunks[1]
+    assert "<h2>Section B</h2>" in chunks[2]
+
+
+def test_split_html_no_headings_falls_back_to_raw_split() -> None:
+    """HTML zonder headings wordt ruw op max_chars gesplitst."""
+    html = "a" * 250
+    chunks = _split_html_into_chunks(html, max_chars=100)
+    assert len(chunks) == 3
+    assert all(len(c) <= 100 for c in chunks)
+
+
+def test_split_html_empty_chunks_filtered() -> None:
+    """Chunks die enkel whitespace bevatten worden weggefilterd."""
+    html = "   " + "<h1>Header</h1>" + "content" * 50
+    chunks = _split_html_into_chunks(html, max_chars=50)
+    assert all(c.strip() for c in chunks)
+
+
+# ---------------------------------------------------------------------------
+# Test voor _call_claude
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_call_claude_returns_text() -> None:
+    """_call_claude geeft de text van de eerste content-block terug."""
+    from src.cleaner import _call_claude
+
+    mock_content = MagicMock()
+    mock_content.text = "# Result"
+    mock_message = MagicMock()
+    mock_message.content = [mock_content]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_message)
+
+    result = await _call_claude(mock_client, "https://example.com", "Title", "<p>html</p>")
+    assert result == "# Result"
+    mock_client.messages.create.assert_called_once()
 
 
 @pytest.mark.asyncio

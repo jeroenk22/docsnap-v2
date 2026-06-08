@@ -20,7 +20,7 @@ import anthropic
 from .scraper import ScrapedPage
 
 MODEL = "claude-haiku-4-5-20251001"
-MAX_HTML_CHARS = 100_000  # na pre-cleaning; body-only HTML is veel compacter
+MAX_HTML_CHARS = 200_000  # na pre-cleaning; Haiku heeft 200K context
 MAX_RESPONSE_TOKENS = 8_192  # ruim genoeg voor pagina's met lange code blocks
 
 SYSTEM_PROMPT = """Je bent een HTML-naar-Markdown converter gespecialiseerd in documentatiesites.
@@ -116,33 +116,83 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 1) -> list[di
     return cleaned
 
 
+def _split_html_into_chunks(html: str, max_chars: int) -> list[str]:
+    """Splits HTML op heading-grenzen zodat elk chunk ≤ max_chars tekens is.
+
+    Splitst bij <h1>, <h2> of <h3> tags zodat chunks inhoudelijk samenhangend
+    blijven. Als er geen headings zijn, wordt ruw op max_chars afgekapt.
+    """
+    if len(html) <= max_chars:
+        return [html]
+
+    heading_positions = [m.start() for m in re.finditer(r"<h[1-3][\s>]", html, re.IGNORECASE)]
+
+    if not heading_positions:
+        return [html[i : i + max_chars] for i in range(0, len(html), max_chars)]
+
+    chunks: list[str] = []
+    start = 0
+
+    while start < len(html):
+        end = start + max_chars
+        if end >= len(html):
+            chunks.append(html[start:])
+            break
+
+        # Zoek het laatste heading-splitpunt vóór end
+        split_at = next(
+            (pos for pos in reversed(heading_positions) if start < pos <= end),
+            None,
+        )
+        if split_at is None:
+            chunks.append(html[start:end])
+            start = end
+        else:
+            chunks.append(html[start:split_at])
+            start = split_at
+
+    return [c for c in chunks if c.strip()]
+
+
+async def _call_claude(
+    client: anthropic.AsyncAnthropic,
+    url: str,
+    title: str,
+    html: str,
+) -> str:
+    """Eén Claude API call: HTML → Markdown. Systeemprompt is gecached."""
+    message = await client.messages.create(
+        model=MODEL,
+        max_tokens=MAX_RESPONSE_TOKENS,
+        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        messages=[
+            {
+                "role": "user",
+                "content": f"URL: {url}\nTitel: {title}\n\nHTML:\n{html}",
+            }
+        ],
+    )
+    return message.content[0].text if message.content else ""
+
+
 async def _clean_single_page(
     client: anthropic.AsyncAnthropic,
     semaphore: asyncio.Semaphore,
     page: ScrapedPage,
 ) -> dict:
-    """Reinig één pagina via Claude API."""
+    """Reinig één pagina via Claude API. Grote pagina's worden in chunks verwerkt."""
     async with semaphore:
-        html_preprocessed = _preprocess_html(page.html)
-        html_truncated = html_preprocessed[:MAX_HTML_CHARS]
+        html = _preprocess_html(page.html)
+        chunks = _split_html_into_chunks(html, MAX_HTML_CHARS)
 
-        # De systeemprompt is identiek voor elke pagina — cache hem zodat die
-        # tokens na de eerste call niet meer tellen voor de rate limit.
-        message = await client.messages.create(
-            model=MODEL,
-            max_tokens=MAX_RESPONSE_TOKENS,
-            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"URL: {page.url}\n"
-                        f"Titel: {page.title}\n\n"
-                        f"HTML:\n{html_truncated}"
-                    ),
-                }
-            ],
-        )
+        if len(chunks) == 1:
+            markdown = await _call_claude(client, page.url, page.title, chunks[0])
+        else:
+            parts: list[str] = []
+            for i, chunk in enumerate(chunks, 1):
+                print(f"         chunk {i}/{len(chunks)}...", end="\r", flush=True)
+                parts.append(await _call_claude(client, page.url, page.title, chunk))
+            print(" " * 30, end="\r")  # wis chunk-voortgangsregel
+            markdown = "\n\n".join(parts)
 
-        markdown = message.content[0].text if message.content else ""
         return {"url": page.url, "title": page.title, "markdown": markdown}
