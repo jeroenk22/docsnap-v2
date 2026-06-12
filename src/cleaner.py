@@ -29,8 +29,9 @@ Taak: Extraheer ALLEEN de documentatie-inhoud uit de gegeven HTML en converteer 
 
 Regels:
 - Verwijder: navigatiemenus, sidebars, headers, footers, cookiebanners, advertenties, breadcrumbs
-- Bewaar: alle technische inhoud, code blocks, tabellen, afbeeldingen (als alt-tekst), links
-- Code blocks: geef deze ALTIJD volledig en onafgekapt weer — nooit afkorten met "..." of "[rest van code]"
+- Bewaar: ALLE technische inhoud volledig en woordelijk — laat NIETS weg, vat NIETS samen
+- Elke sectie, elke paragraaf, elke tabel, elke stap in een stappenplan: volledig reproduceren
+- Code blocks: ALTIJD volledig en onafgekapt — nooit afkorten met "..." of "[rest van code]"
 - Converteer: koppen naar # ## ###, code naar ``` blocks met de juiste taal, lijsten naar - of 1.
 - Bewaar de hiërarchische structuur van de documentatie
 - Geef ALLEEN de Markdown terug, geen uitleg of toelichting
@@ -87,8 +88,10 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 1) -> list[di
         result = await _clean_single_page(client, semaphore, page)
         completed[0] += 1
         n = len(result.get("markdown", "").strip())
-        label = "⚠️  leeg" if n == 0 else f"{n} tekens"
+        warn = _completeness_warning(page.html, result.get("markdown", ""))
+        label = "⚠️  leeg" if n == 0 else f"{n} tekens{warn}"
         print(f"   [{completed[0]}/{total}] {_fmt_url(result['url'])}  → {label}")
+        result["_incomplete"] = bool(warn)
         return result
 
     tasks = [_clean_and_report(page) for page in pages]
@@ -98,22 +101,40 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 1) -> list[di
     for page, result in zip(pages, results, strict=True):
         if isinstance(result, Exception):
             print(f"⚠️  Fout bij reinigen van {page.url}: {result}")
-            cleaned.append({"url": page.url, "title": page.title, "markdown": ""})
+            cleaned.append({"url": page.url, "title": page.title, "markdown": "", "_incomplete": False})
         else:
             cleaned.append(result)
 
     # Samenvatting — verdachte pagina's direct zichtbaar
     empty = [c for c in cleaned if not c["markdown"].strip()]
-    ok = total - len(empty)
-    print(f"\n   → {ok}/{total} pagina's succesvol opgeschoond.", end="")
+    incomplete = [c for c in cleaned if c.get("_incomplete") and c["markdown"].strip()]
+    ok = total - len(empty) - len(incomplete)
+    print(f"\n   → {ok}/{total} pagina's volledig opgeschoond.", end="")
     if empty:
-        print(f"  ⚠️  {len(empty)} zonder content:")
+        print(f"  ⚠️  {len(empty)} leeg:")
         for c in empty:
             print(f"        {_fmt_url(c['url'])}")
-    else:
+    if incomplete:
+        print(f"\n   ⚠️  {len(incomplete)} mogelijk onvolledig (te weinig koppen vs HTML):")
+        for c in incomplete:
+            print(f"        {_fmt_url(c['url'])}")
+    if not empty and not incomplete:
         print()
 
     return cleaned
+
+
+def _completeness_warning(html: str, markdown: str) -> str:
+    """Vergelijk kop-aantal in HTML vs Markdown; geef waarschuwing als er veel missen.
+
+    Detecteert gevallen waarbij Claude hele secties heeft overgeslagen — zichtbaar
+    doordat de Markdown beduidend minder koppen heeft dan de ruwe HTML.
+    """
+    html_headings = len(re.findall(r"<h[1-6][\s>]", html, re.IGNORECASE))
+    md_headings = len(re.findall(r"^#{1,6}\s", markdown, re.MULTILINE))
+    if html_headings >= 3 and md_headings < html_headings * 0.6:
+        return f"  ⚠️  mogelijk onvolledig ({md_headings}/{html_headings} koppen)"
+    return ""
 
 
 def _split_html_into_chunks(html: str, max_chars: int) -> list[str]:

@@ -93,7 +93,11 @@ async def _run(
     if login_strategy.mode == "none":
         click.echo("📡  Pagina's ontdekken...")
         pages = await discover_pages(url)
-        click.echo(f"   → {len(pages)} pagina's gevonden.")
+        if len(pages) <= 1:
+            click.echo("   → Geen sitemap gevonden — browser wordt gebruikt voor discovery.")
+            pages = []
+        else:
+            click.echo(f"   → {len(pages)} pagina's gevonden.")
 
         # Stap 4a: scrape (zonder login)
         click.echo("🌐  Pagina's scrapen...")
@@ -113,6 +117,16 @@ async def _run(
     # Stap 5: clean content via Claude API
     click.echo(f"🤖  Content opschonen via Claude ({len(raw_pages)} pagina's)...")
     cleaned_pages = await clean_pages(raw_pages)
+
+    # Stap 5b: herlaad pagina's die de completeness-check niet haalden
+    incomplete_urls = [c["url"] for c in cleaned_pages if c.get("_incomplete")]
+    if incomplete_urls:
+        click.echo(f"🔄  {len(incomplete_urls)} mogelijk onvolledige pagina's opnieuw scrapen (extra wachttijd)...")
+        retried = await scrape_pages(incomplete_urls, login_strategy, extra_wait=3.0)
+        if retried:
+            retried_cleaned = await clean_pages(retried)
+            retried_by_url = {c["url"]: c for c in retried_cleaned}
+            cleaned_pages = [retried_by_url.get(c["url"], c) for c in cleaned_pages]
 
     # Stap 6: exporteer
     click.echo(f"💾  Opslaan als {output} in {out_path}...")

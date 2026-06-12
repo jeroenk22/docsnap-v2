@@ -11,6 +11,7 @@ Per pagina:
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse, urlunparse
 
@@ -44,6 +45,7 @@ async def scrape_pages(
     login_strategy: LoginStrategy,
     headless: bool | None = None,
     start_url: str | None = None,
+    extra_wait: float = 0.0,
 ) -> list[ScrapedPage]:
     """Scrape een lijst van URLs en geef de volledige HTML terug.
 
@@ -141,9 +143,9 @@ async def scrape_pages(
                 await _sw_page.close()
 
         # Fase 2 — Discovery
-        # Voor geauthenticeerde sessies: gebruik de browser (heeft auth-cookies).
-        # Voor niet-geauthenticeerde sessies: urls zijn al ontdekt via httpx.
-        if start_url is not None and login_strategy.mode != "none":
+        # Voor geauthenticeerde sessies én voor JS-zware sites waarbij httpx geen
+        # links vond (urls leeg): gebruik de browser voor discovery.
+        if start_url is not None and (login_strategy.mode != "none" or not urls):
             print("📡  Pagina's ontdekken via browser...")
             scrape_urls = await _browser_discover_pages(context, start_url)
             print(f"   → {len(scrape_urls)} pagina's gevonden.")
@@ -157,7 +159,7 @@ async def scrape_pages(
             print(f"   [{i}/{total}] {_fmt_url(url)}")
             try:
                 page = await context.new_page()
-                scraped = await _scrape_single_page(page, url)
+                scraped = await _scrape_single_page(page, url, extra_wait=extra_wait)
                 results.append(scraped)
                 await page.close()
             except Exception as e:  # noqa: BLE001
@@ -184,6 +186,87 @@ def _norm_url(url: str) -> str:
     return urlunparse((p.scheme.lower(), p.netloc.lower(), unquote(p.path), "", "", ""))
 
 
+async def _wait_for_js_content(page: Page, stable_for: float = 1.5, timeout: float = 12.0) -> None:
+    """Wacht tot het aantal links op de pagina stabiel is.
+
+    Confluence en andere SPA's laden de zijbalk-navigatie asynchroon ná
+    networkidle. We pollen het aantal <a>-tags totdat dat aantal minstens
+    `stable_for` seconden niet meer veranderd is — dan weten we dat de
+    navigatie volledig geladen is.
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    prev_count = -1
+    stable_since = time.monotonic()
+
+    while time.monotonic() < deadline:
+        count: int = await page.eval_on_selector_all("a[href]", "els => els.length")
+        now = time.monotonic()
+        if count != prev_count:
+            prev_count = count
+            stable_since = now
+        elif now - stable_since >= stable_for:
+            return  # link-count stabiel voor stable_for seconden
+        await asyncio.sleep(0.3)
+
+
+async def _claude_identify_nav_links(same_domain_links: list[str], base_url: str) -> list[str]:
+    """Vraag Claude welke same-domain links documentatie-navigatielinks zijn.
+
+    Wordt aangeroepen als de pad-gebaseerde scope geen child-pagina's oplevert.
+    Claude herkent de werkelijke URL-structuur van de site (bijv. Confluence
+    /display/SPACE/ i.p.v. /space/SPACE/) en geeft de relevante links terug.
+    """
+    import json
+    import os
+
+    import anthropic
+
+    if not same_domain_links:
+        return []
+
+    client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    unique = list(dict.fromkeys(same_domain_links))[:150]
+
+    prompt = (
+        f"Start URL: {base_url}\n\n"
+        "Same-domain links found on this documentation page:\n"
+        + "\n".join(unique)
+        + "\n\nWhich of these are links to documentation content pages in the same section "
+        "as the start URL? Exclude: login, admin, user profile, search, images, CSS/JS files.\n"
+        "Return ONLY a JSON array of the relevant URLs, nothing else."
+    )
+
+    try:
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        # Strip markdown code fences if model wraps in ```json ... ```
+        text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("`").strip()
+        result = json.loads(text)
+        return [u for u in result if isinstance(u, str)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _common_path_prefix(urls: list[str]) -> str:
+    """Geeft het diepste gemeenschappelijke pad-prefix van een lijst URLs."""
+    paths = [urlparse(u).path for u in urls if u]
+    split_paths = [p.strip("/").split("/") for p in paths if p.strip("/")]
+    if not split_paths:
+        return ""
+    common: list[str] = []
+    for parts in zip(*split_paths):
+        if len({p.lower() for p in parts}) == 1:
+            common.append(parts[0])
+        else:
+            break
+    return ("/" + "/".join(common)) if common else ""
+
+
 async def _browser_discover_pages(
     context: BrowserContext,
     base_url: str,
@@ -191,22 +274,49 @@ async def _browser_discover_pages(
 ) -> list[str]:
     """BFS link discovery via een geauthenticeerde browser context.
 
-    Gebruikt de canonieke URL (page.url na redirect) als sleutel voor
-    deduplicatie zodat meerdere URL-vormen van dezelfde pagina — bijv.
-    een Confluence ID-URL die doorstuurt naar een titel-URL — als één
-    pagina worden geteld.
+    Stap 1 — Wacht op JS-rendering: na networkidle pollen we kort tot de pagina
+    genoeg links heeft (SPA's bouwen DOM soms na networkidle verder op).
+
+    Stap 2 — Pad-prefix scope: links worden gefilterd op het pad van de start-URL.
+
+    Stap 3 — Claude-fallback: als de eerste pagina wél same-domain links heeft
+    maar geen ervan valt in scope (bijv. Confluence /display/SPACE/ i.p.v.
+    /space/SPACE/), vraagt Claude welke links documentatie-navigatielinks zijn.
+    Op basis van het antwoord wordt de scope automatisch bijgesteld.
+
+    Cloudflare-detectie en -afhandeling lopen vóór deze functie (in scrape_pages)
+    en worden hier niet geraakt.
     """
     parsed = urlparse(base_url)
     base_path = parsed.path.rstrip("/")
 
+    # Mutable scope zodat de Claude-fallback het pad kan bijstellen tijdens de BFS.
+    scope: dict[str, str] = {"path": base_path}
+
     def _in_scope(u: str) -> bool:
         path = urlparse(u).path
-        return path == base_path or path.startswith(base_path + "/")
+        bp = scope["path"]
+        return not bp or path == bp or path.startswith(bp + "/")
 
-    seen: set[str] = set()     # genormaliseerde URLs die al gezien zijn
-    queued: set[str] = set()   # genormaliseerde URLs in de queue (O(1) dedup)
+    def _enqueue(link: str) -> None:
+        clean = link.split("#")[0].split("?")[0].rstrip("/")
+        norm_clean = _norm_url(clean)
+        if (
+            clean
+            and urlparse(clean).netloc.lower() == parsed.netloc.lower()
+            and _in_scope(clean)
+            and norm_clean not in seen
+            and norm_clean not in queued
+            and _is_html_url(clean)
+        ):
+            queue.append(clean)
+            queued.add(norm_clean)
+
+    seen: set[str] = set()
+    queued: set[str] = set()
     queue: list[str] = [base_url]
-    result: list[str] = []     # canonieke URLs om te scrapen (één per unieke pagina)
+    result: list[str] = []
+    first_page = True
 
     queued.add(_norm_url(base_url))
 
@@ -226,22 +336,29 @@ async def _browser_discover_pages(
                 except Exception:  # noqa: BLE001
                     pass
 
-                # Sla HTTP-foutpagina's (404, 403, 500 etc.) over — generiek voor
-                # elke website. Dode links of verwijderde pagina's worden zo niet
-                # in de scrape-lijst opgenomen.
+                # Extra wachttijd voor SPA's die na networkidle nog links renderen.
+                await _wait_for_js_content(page)
+
+                # Wacht expliciet op client-side redirect: als de browser nog op de
+                # start-URL staat na alle waits, kan er een JS-redirect onderweg zijn.
+                if page.url.rstrip("/") == url.rstrip("/"):
+                    try:
+                        await page.wait_for_url(
+                            lambda u: u.rstrip("/") != url.rstrip("/"),
+                            timeout=5_000,
+                        )
+                        await _wait_for_js_content(page)  # wacht ook op de doorgestuurde pagina
+                    except Exception:  # noqa: BLE001
+                        pass  # geen redirect binnen 5s — dan is dit de eindpagina
+
                 if response is not None and response.status >= 400:
                     continue
 
-                # Gebruik de canonieke URL na redirect als definitieve URL voor
-                # deze pagina. Dit dekt ID-URL→titel-URL, trailing-slash
-                # normalisatie, en elke andere server-side redirect — generiek
-                # voor alle websites.
                 canonical = page.url.split("#")[0].split("?")[0].rstrip("/")
                 norm_canonical = _norm_url(canonical)
 
                 if norm_canonical != norm:
                     if norm_canonical in seen:
-                        # Pagina-inhoud al verwerkt via een andere URL-vorm
                         continue
                     seen.add(norm_canonical)
 
@@ -253,20 +370,40 @@ async def _browser_discover_pages(
                     "a[href]",
                     "els => els.map(e => e.href)",
                 )
-                for link in links:
-                    clean = link.split("#")[0].split("?")[0].rstrip("/")
-                    norm_clean = _norm_url(clean)
-                    if (
-                        clean
-                        and urlparse(clean).netloc.lower() == parsed.netloc.lower()
-                        and _in_scope(clean)
-                        and norm_clean not in seen
-                        and norm_clean not in queued
-                        and _is_html_url(clean)
-                    ):
-                        queue.append(clean)
-                        queued.add(norm_clean)
+                same_domain = [
+                    l for l in links
+                    if urlparse(l).netloc.lower() == parsed.netloc.lower()
+                ]
+
+                # Na de eerste pagina: als er same-domain links zijn maar geen
+                # ervan valt in scope, vraagt Claude welke links relevant zijn en
+                # wordt het scope-pad automatisch bijgesteld.
+                if first_page:
+                    first_page = False
+                    in_scope_children = [
+                        l for l in same_domain
+                        if _in_scope(l.split("#")[0].split("?")[0].rstrip("/"))
+                        and _norm_url(l.split("#")[0].split("?")[0].rstrip("/")) not in seen
+                    ]
+                    if not in_scope_children and same_domain:
+                        print("   🤖  Pad-prefix niet herkend — Claude analyseert navigatiestructuur...")
+                        claude_links = await _claude_identify_nav_links(same_domain, base_url)
+                        if claude_links:
+                            new_prefix = _common_path_prefix(claude_links)
+                            if new_prefix and new_prefix != scope["path"]:
+                                print(f"   → Scope bijgewerkt naar: {new_prefix}")
+                                scope["path"] = new_prefix
+                            for link in claude_links:
+                                _enqueue(link)
+                        elif not same_domain:
+                            print("   ⚠️  Geen links gevonden — probeer --login manual als de site inloggen vereist.")
+
+                for link in same_domain:
+                    _enqueue(link)
+
             except Exception:  # noqa: BLE001
+                if first_page:
+                    first_page = False
                 continue
     finally:
         await page.close()
@@ -274,7 +411,7 @@ async def _browser_discover_pages(
     return sorted(set(result))
 
 
-async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
+async def _scrape_single_page(page: Page, url: str, extra_wait: float = 0.0) -> ScrapedPage:
     """Laad één pagina volledig en geef de HTML terug."""
     # networkidle wacht op Cloudflare-redirect-chains; timeout is niet-fataal
     # zodat sites met continue achtergrond-requests ook werken.
@@ -290,6 +427,10 @@ async def _scrape_single_page(page: Page, url: str) -> ScrapedPage:
             await asyncio.sleep(1)
     except Exception:  # noqa: BLE001
         pass
+
+    if extra_wait:
+        await asyncio.sleep(extra_wait)
+
     await _scroll_to_bottom(page)
     await _expand_accordions(page)
     await asyncio.sleep(0.5)
@@ -375,7 +516,31 @@ async def _wait_for_challenge_solved(page: Page, timeout: int = 120) -> None:
 
 
 async def _expand_accordions(page: Page) -> None:
-    """Klik alle collapsible elementen open."""
+    """Zet alle collapsible elementen open via JavaScript (betrouwbaarder dan klikken).
+
+    JavaScript-aanpak werkt ook als elementen buiten de viewport vallen of als
+    click-handlers de focus stelen. Click-aanpak als fallback voor widgets die
+    via JS niet reageren (bijv. custom React/Vue componenten met eigen state).
+    """
+    # Stap 1: forceer via JavaScript — dekt <details>, aria-expanded, hidden panels
+    try:
+        await page.evaluate("""() => {
+            // Open alle <details> elementen
+            document.querySelectorAll('details:not([open])').forEach(el => { el.open = true; });
+            // Zet aria-expanded op true
+            document.querySelectorAll('[aria-expanded="false"]').forEach(el => {
+                el.setAttribute('aria-expanded', 'true');
+            });
+            // Verwijder hidden/collapsed klassen die content verbergen
+            document.querySelectorAll('[class*="collapsed"],[class*="is-closed"],[class*="closed"]').forEach(el => {
+                el.classList.remove('collapsed', 'is-closed', 'closed');
+            });
+        }""")
+        await asyncio.sleep(0.3)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Stap 2: klik alsnog op widgets die eigen React/Vue state bijhouden
     for selector in ACCORDION_SELECTORS:
         try:
             elements = page.locator(selector)
