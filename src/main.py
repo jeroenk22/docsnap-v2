@@ -39,6 +39,12 @@ load_dotenv()
     show_default=True,
     help="Map waar output wordt opgeslagen.",
 )
+@click.option(
+    "--single",
+    is_flag=True,
+    default=False,
+    help="Sla discovery over en scrape alleen de opgegeven URL.",
+)
 def cli(
     url: str,
     login: str,
@@ -46,12 +52,24 @@ def cli(
     password: str | None,
     output: str,
     out_dir: str,
+    single: bool,
 ) -> None:
     """docsnap — scrape documentatiesites naar schone Markdown.
 
     URL is de startpagina van de documentatie die je wilt scrapen.
+
+    \b
+    Let op: URLs met & moeten tussen aanhalingstekens staan, anders kapt de
+    shell de URL af. Gebruik altijd:
+        docsnap "https://example.com/page?a=1&b=2"
     """
-    asyncio.run(_run(url, login, username, password, output, out_dir))
+    if url.endswith("+") or url.endswith("%2"):
+        raise click.UsageError(
+            "De URL lijkt afgekapt. Zet de URL tussen aanhalingstekens:\n"
+            f'    docsnap "{url}..." --login ...\n'
+            "URLs met & worden door de shell gesplitst als je ze niet quoot."
+        )
+    asyncio.run(_run(url, login, username, password, output, out_dir, single))
 
 
 async def _run(
@@ -61,6 +79,7 @@ async def _run(
     password: str | None,
     output: str,
     out_dir: str,
+    single: bool = False,
 ) -> None:
     from .cleaner import clean_pages
     from .discovery import discover_pages
@@ -86,11 +105,12 @@ async def _run(
     login_strategy = create_login_strategy(login, username, password)
 
     # Stap 3: ontdek alle pagina's
-    # Voor sites zonder login: snel via httpx/sitemap.
-    # Voor sites met login: httpx heeft geen auth-cookies — discovery + scraping
-    # gebeuren samen in de geauthenticeerde browser-sessie (scrape_pages print
-    # zelf de fase-uitvoer).
-    if login_strategy.mode == "none":
+    if single:
+        # --single: sla discovery over, scrape alleen de opgegeven URL.
+        # Login werkt via urls[0]; start_url=None voorkomt browser-discovery.
+        click.echo("📄  Enkele pagina — discovery overgeslagen.")
+        raw_pages = await scrape_pages([url], login_strategy)
+    elif login_strategy.mode == "none":
         click.echo("📡  Pagina's ontdekken...")
         pages = await discover_pages(url)
         if len(pages) <= 1:
@@ -102,7 +122,7 @@ async def _run(
         # Stap 4a: scrape (zonder login)
         click.echo("🌐  Pagina's scrapen...")
         raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
-    else:
+    else:  # login met discovery
         # Stap 3+4 gecombineerd: login → swagger check → discovery → scrapen
         pages = []
         try:

@@ -331,3 +331,186 @@ def test_swagger_detected_exception_stores_result() -> None:
     result = {"url": "https://example.com/openapi.json", "format": "json", "spec": {}}
     exc = SwaggerDetected(result)
     assert exc.result == result
+
+
+@pytest.mark.asyncio
+async def test_fetch_spec_yaml_without_pyyaml_rejects_html() -> None:
+    """Zonder PyYAML mag een HTML-redirect niet als YAML-spec worden geaccepteerd.
+
+    Regressie: /swagger.yaml redirectte naar een Scalar docs-pagina; de
+    yaml_raw-fallback sloeg die HTML op als 'spec'.
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "text/html"}
+    mock_resp.text = "<!doctype html>\n<html><body><div id='app'></div></body></html>"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    with patch.dict("sys.modules", {"yaml": None}):
+        result = await _fetch_spec(mock_client, "https://example.com/swagger.yaml")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_spec_yaml_without_pyyaml_accepts_real_spec() -> None:
+    """Zonder PyYAML wordt echte YAML-spec-tekst wel als yaml_raw geaccepteerd."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "application/yaml"}
+    mock_resp.text = "openapi: 3.0.3\ninfo:\n  title: Test\n"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    with patch.dict("sys.modules", {"yaml": None}):
+        result = await _fetch_spec(mock_client, "https://example.com/swagger.yaml")
+
+    assert result is not None
+    assert result["format"] == "yaml_raw"
+
+
+@pytest.mark.asyncio
+async def test_detect_and_fetch_swagger_start_url_is_the_spec() -> None:
+    """De start-URL kan zelf de spec zijn (bijv. .../openapi/pro-v1.json).
+
+    Regressie: die response werd genegeerd, waarna de kandidaten-loop een
+    verkeerde URL oppikte.
+    """
+    spec = {"openapi": "3.1.1", "info": {"title": "Pro - API V1", "version": "v1"}}
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"content-type": "application/json;charset=utf-8"}
+    mock_resp.json = MagicMock(return_value=spec)
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.swagger.httpx.AsyncClient", return_value=mock_client):
+        result = await detect_and_fetch_swagger("https://example.com/openapi/pro-v1.json")
+
+    assert result is not None
+    assert result["spec"] == spec
+    assert result["url"] == "https://example.com/openapi/pro-v1.json"
+    # Alleen de start-URL opgehaald: geen doorval naar de kandidaten-loop.
+    assert mock_client.get.await_count == 1
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://example.com/dev/api-docs", True),
+        ("https://example.com/swagger/index.html", True),
+        ("https://example.com/guide/intro", False),
+        # Subdomeinen als docs.* of api.* tellen niet: alleen het pad.
+        ("https://docs.example.com", False),
+        ("https://api.example.com/", False),
+    ],
+)
+def test_url_looks_like_api_portal(url: str, expected: bool) -> None:
+    """Alleen het URL-pad bepaalt of het op een API-portal lijkt."""
+    from src.swagger import _url_looks_like_api_portal
+
+    assert _url_looks_like_api_portal(url) is expected
+
+
+def _fake_playwright(responses: list[MagicMock]) -> MagicMock:
+    """Bouw een async_playwright()-mock die bij goto de responses afvuurt."""
+    handlers: list = []
+
+    page = MagicMock()
+    page.on = MagicMock(side_effect=lambda event, fn: handlers.append(fn))
+
+    async def fake_goto(url: str, **kwargs: object) -> None:
+        for resp in responses:
+            for fn in handlers:
+                await fn(resp)
+
+    page.goto = AsyncMock(side_effect=fake_goto)
+
+    context = MagicMock()
+    context.new_page = AsyncMock(return_value=page)
+    browser = MagicMock()
+    browser.new_context = AsyncMock(return_value=context)
+    browser.close = AsyncMock()
+
+    pw = MagicMock()
+    pw.chromium.launch = AsyncMock(return_value=browser)
+    manager = MagicMock()
+    manager.__aenter__ = AsyncMock(return_value=pw)
+    manager.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(return_value=manager)
+
+
+def _json_response(url: str, data: object, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.url = url
+    resp.status = status
+    resp.headers = {"content-type": "application/json"}
+    resp.json = AsyncMock(return_value=data)
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_detect_via_browser_intercept_captures_spec() -> None:
+    """De eerste JSON-response die een OpenAPI spec is, wordt teruggegeven."""
+    from src.swagger import _detect_via_browser_intercept
+
+    spec = {"openapi": "3.0.0", "info": {"title": "X"}}
+    responses = [
+        _json_response("https://example.com/config.json", {"theme": "dark"}),
+        _json_response("https://cdn.example.com/spec.json", spec),
+    ]
+
+    with (
+        patch("playwright.async_api.async_playwright", _fake_playwright(responses)),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        result = await _detect_via_browser_intercept("https://example.com/dev")
+
+    assert result == {"url": "https://cdn.example.com/spec.json", "format": "json", "spec": spec}
+
+
+@pytest.mark.asyncio
+async def test_detect_via_browser_intercept_returns_none_without_spec() -> None:
+    """Zonder spec-response geeft de interceptie None terug."""
+    from src.swagger import _detect_via_browser_intercept
+
+    responses = [_json_response("https://example.com/a.json", {"a": 1})]
+
+    with (
+        patch("playwright.async_api.async_playwright", _fake_playwright(responses)),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        result = await _detect_via_browser_intercept("https://example.com/dev")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_detect_and_fetch_swagger_uses_browser_fallback_for_api_path() -> None:
+    """Zonder httpx-resultaat valt een /dev-URL terug op browser-interceptie."""
+    plain = MagicMock()
+    plain.status_code = 404
+    plain.text = "<html></html>"
+    plain.headers = {}
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=plain)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    found = {"url": "u", "format": "json", "spec": {"openapi": "3.0.0"}}
+    with (
+        patch("src.swagger.httpx.AsyncClient", return_value=mock_client),
+        patch("src.swagger._detect_via_browser_intercept", AsyncMock(return_value=found)) as m,
+    ):
+        result = await detect_and_fetch_swagger("https://example.com/dev")
+
+    m.assert_awaited_once_with("https://example.com/dev")
+    assert result == found

@@ -32,6 +32,8 @@ Regels:
 - Bewaar: ALLE technische inhoud volledig en woordelijk — laat NIETS weg, vat NIETS samen
 - Elke sectie, elke paragraaf, elke tabel, elke stap in een stappenplan: volledig reproduceren
 - Code blocks: ALTIJD volledig en onafgekapt — nooit afkorten met "..." of "[rest van code]"
+- Afbeeldingen: behoud ELKE inhoudelijke <img> als ![alt](src), met de src exact zoals
+  in de HTML staat — ook relatieve paden. Laat alleen iconen en emoji weg.
 - Converteer: koppen naar # ## ###, code naar ``` blocks met de juiste taal, lijsten naar - of 1.
 - Bewaar de hiërarchische structuur van de documentatie
 - Geef ALLEEN de Markdown terug, geen uitleg of toelichting
