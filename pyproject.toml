@@ -27,9 +27,15 @@ dev = [
 pdf = [
     "weasyprint>=62.0",
 ]
+lookup = [
+    "beautifulsoup4>=4.12",
+    "markdownify>=0.13",
+    "pyyaml>=6",
+]
 
 [project.scripts]
 docsnap = "src.main:cli"
+docsnap-lookup = "src.lookup.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

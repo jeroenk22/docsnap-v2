@@ -42,6 +42,34 @@ docsnap https://docs.example.com --output files --out-dir ./output
 docsnap https://petstore.swagger.io
 ```
 
+## doc-lookup: documentatie opzoeken vanuit Claude Code (optioneel)
+
+Naast het scrapen van een hele site kan Claude Code met de skill `/doc-lookup` in elk
+project een vraag opzoeken in online documentatie, ook achter een login. Alleen de
+relevante pagina's worden gelezen, volledig, en het antwoord bevat alleen wat er in de
+bron staat. Sessies en cache staan in `~/.doc-lookup/` en worden gedeeld tussen projecten.
+
+Eenmalig per computer:
+
+```bash
+# 1. Het commando docsnap-lookup globaal beschikbaar maken (editable: wijzigingen
+#    in deze repo werken direct door)
+uv tool install --editable "<pad naar docsnap-v2>[lookup]"
+playwright install chromium
+
+# 2. De skill koppelen aan je persoonlijke Claude Code-skills
+# Windows (PowerShell):
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\doc-lookup" -Target "<pad naar docsnap-v2>\claude-skill\doc-lookup"
+# macOS/Linux:
+ln -s "<pad naar docsnap-v2>/claude-skill/doc-lookup" ~/.claude/skills/doc-lookup
+```
+
+Daarna in elk project: `/doc-lookup hoe stel ik een gebeurtenis in support.example.com`. De skill
+gebruikt de zoekfunctie van de site zelf (zoekindex, platform-API of de zoekbalk) en leest de
+beste treffers volledig.
+
+Het commando werkt ook los: `docsnap-lookup --help` (`sites`, `init`, `login`, `search`, `fetch`).
+
 ## Omgevingsvariabelen
 
 | Variabele           | Verplicht | Beschrijving           |
