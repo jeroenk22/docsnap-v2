@@ -267,6 +267,42 @@ async def test_scrape_single_page_falls_back_to_body() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scrape_single_page_skips_missing_selectors() -> None:
+    """_scrape_single_page wacht niet op een container die niet op de pagina staat.
+
+    page.inner_html() wacht standaard 30s op een ontbrekend element. Fumadocs-sites
+    hebben geen <main>, alleen <article>: zonder deze check kost elke pagina 30s extra.
+    """
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.evaluate = AsyncMock(return_value=0)
+    mock_page.locator = MagicMock(
+        return_value=AsyncMock(count=AsyncMock(return_value=0))
+    )
+    mock_page.title = AsyncMock(return_value="Test Page")
+    mock_page.content = AsyncMock(return_value="<html><body></body></html>")
+
+    article_html = "<h1>Docs</h1>" + "x" * 600
+
+    async def fake_query_selector(selector: str) -> MagicMock | None:
+        return MagicMock() if selector == "article" else None
+
+    async def fake_inner_html(selector: str) -> str:
+        if selector == "article":
+            return article_html
+        raise TimeoutError(f"Timeout 30000ms exceeded waiting for {selector}")
+
+    mock_page.query_selector = AsyncMock(side_effect=fake_query_selector)
+    mock_page.inner_html = AsyncMock(side_effect=fake_inner_html)
+
+    result = await _scrape_single_page(mock_page, "https://docs.example.com/page")
+
+    requested = [c.args[0] for c in mock_page.inner_html.call_args_list]
+    assert requested == ["article"]
+    assert result.html == article_html
+
+
+@pytest.mark.asyncio
 async def test_scrape_single_page_waits_for_bot_challenge() -> None:
     """_scrape_single_page wacht op bot-challenge als de pagina er één toont."""
     mock_page = AsyncMock()
