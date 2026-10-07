@@ -19,7 +19,14 @@ from urllib.parse import urlparse
 import click
 
 from . import cache
-from .convert import completeness, html_to_markdown, is_icon
+from .convert import (
+    completeness,
+    html_to_markdown,
+    is_icon,
+    localize_markdown_images,
+    markdown_images,
+    markdown_title,
+)
 from .render import (
     CANDIDATES_JS,
     DEFAULT_CONTENT_SELECTORS,
@@ -27,6 +34,7 @@ from .render import (
     choose_container,
     detect_platform,
     download_images,
+    fetch_markdown,
     goto,
     is_positional,
     render_page,
@@ -412,7 +420,7 @@ async def fetch(site_name: str, items: tuple[str, ...], no_images: bool) -> int:
         for i, url in enumerate(urls, 1):
             t0 = time.monotonic()
             say(f"[{i}/{len(urls)}] {url}")
-            r = await render_page(page, site, url)
+            r = await fetch_markdown(context, url) or await render_page(page, site, url)
             if r.status == "AUTH":
                 site.save_index()
                 say(
@@ -436,25 +444,38 @@ async def fetch(site_name: str, items: tuple[str, ...], no_images: bool) -> int:
             data = r.data
             e = cache.entry(site, url)
             slug = e["slug"] if e else url_slug(url)
-            content_imgs = [im for im in data["imgs"] if not is_icon(im)]
+            raw_md = data.get("markdown")
+            imgs = markdown_images(raw_md, url) if raw_md else data["imgs"]
+            content_imgs = [im for im in imgs if not is_icon(im)]
             if no_images:
                 img_map, saved = {im["idx"]: "" for im in content_imgs}, []
             else:
-                img_map, saved = await download_images(
-                    context, site, slug, data["imgs"]
+                img_map, saved = await download_images(context, site, slug, imgs)
+            if raw_md:  # al Markdown: alleen afbeeldingen lokaal maken
+                md = localize_markdown_images(raw_md, img_map)
+                title = markdown_title(raw_md, url)
+                info = {"complex_tables": 0, "callouts": 0, "expands": 0}
+                failed = 0 if no_images else len(content_imgs) - len(saved)
+                comp = {
+                    "checks": None,
+                    "warnings": [f"{failed} afbeelding(en) niet opgehaald"]
+                    if failed
+                    else [],
+                }
+            else:
+                md, info = html_to_markdown(data["html"], img_map)
+                title = data["title"] or url
+                comp = completeness(
+                    data,
+                    md,
+                    len(content_imgs),
+                    len(content_imgs) if no_images else len(saved),
                 )
-            md, info = html_to_markdown(data["html"], img_map)
-            comp = completeness(
-                data,
-                md,
-                len(content_imgs),
-                len(content_imgs) if no_images else len(saved),
-            )
             meta = {"slug": slug, "images": saved, "warnings": comp["warnings"]}
             if r.response is not None:
                 meta["etag"] = r.response.headers.get("etag")
                 meta["last_modified"] = r.response.headers.get("last-modified")
-            change = cache.store_page(site, url, data["title"] or url, md, meta)
+            change = cache.store_page(site, url, title, md, meta)
             ent = cache.entry(site, url)
             img_tok = sum(s["tokens"] for s in saved)
             totals[change] += 1
@@ -470,18 +491,22 @@ async def fetch(site_name: str, items: tuple[str, ...], no_images: bool) -> int:
                 extra.append(f"{info['callouts']} callout(s)")
             if info["expands"]:
                 extra.append(f"{info['expands']} uitklapblok(ken)")
-            say(f"      {data['title'][:80]}")
+            say(f"      {title[:80]}")
             say(
                 f"      {change} ({time.monotonic() - t0:.1f}s) - {fmt_tokens(ent['tokens'])} tekst"
                 + (f", {len(saved)} afb. ({fmt_tokens(img_tok)})" if saved else "")
                 + (" | " + ", ".join(extra) if extra else "")
             )
-            c = comp["checks"]
-            say(
-                f"      volledigheid: tekst {c['tekstdekking']} | tabellen {c['tabellen']} | "
-                f"lijsten {c['lijstitems']} | code {c['codeblokken']} | koppen {c['koppen']} | "
-                f"afb. {c['afbeeldingen']}" + ("" if comp["warnings"] else "  OK")
-            )
+            if c := comp["checks"]:
+                say(
+                    f"      volledigheid: tekst {c['tekstdekking']} | tabellen {c['tabellen']} | "
+                    f"lijsten {c['lijstitems']} | code {c['codeblokken']} | koppen {c['koppen']} | "
+                    f"afb. {c['afbeeldingen']}" + ("" if comp["warnings"] else "  OK")
+                )
+            else:
+                say(
+                    "      bron is al Markdown: letterlijk overgenomen, geen conversie nodig"
+                )
             for w in comp["warnings"]:
                 warn(w)
             if comp["warnings"]:

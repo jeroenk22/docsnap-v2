@@ -34,7 +34,7 @@ def test_init_detects_login_wall(docsite) -> None:
     result = run("init", f"{docsite}/docs/late", "--name", "testsite")
 
     assert result.exit_code == 3
-    assert "Login vereist (wachtwoordveld zichtbaar)" in result.output
+    assert "Login vereist (inlogformulier zichtbaar)" in result.output
     assert "login testsite" in result.output
     cfg = yaml.safe_load(Site("testsite").cfg_path.read_text(encoding="utf-8"))
     assert cfg["login"] == {"mode": "manual", "login_url": f"{docsite}/login"}
@@ -232,3 +232,31 @@ def test_init_follows_redirect_to_other_host(docsite) -> None:
     assert result.exit_code == 0, result.output
     assert f"doorgestuurd naar http://localhost:{port}/open/start" in result.output
     assert Site.load("verhuisd").base_url == f"http://localhost:{port}/open/start"
+
+
+def test_api_console_token_field_is_not_a_login_wall(docsite) -> None:
+    """Het tokenveld van een 'Try it'-console is geen inlogformulier (zoals readme.io)."""
+    assert run("init", f"{docsite}/open/console", "--name", "api").exit_code == 0
+
+    result = run("fetch", "api", f"{docsite}/open/console")
+
+    assert result.exit_code == 0, result.output
+    assert "Ritten plannen" in result.output
+
+
+def test_fetch_markdown_page_directly(docsite) -> None:
+    """Een .md-pagina wordt letterlijk overgenomen, met de afbeelding lokaal."""
+    assert run("init", f"{docsite}/open/start", "--name", "md").exit_code == 0
+
+    result = run("fetch", "md", f"{docsite}/open/doc.md")
+
+    assert result.exit_code == 0, result.output
+    assert "bron is al Markdown" in result.output
+    assert "1 afb." in result.output
+    site = Site.load("md")
+    entry = site.index[f"{docsite}/open/doc.md"]
+    assert entry["title"] == "Adres aanmaken"
+    md = (site.pages_dir / f"{entry['slug']}.md").read_text(encoding="utf-8")
+    assert "| radiusMeters | ja |" in md
+    assert f"![Kaart met geofence](../images/{entry['slug']}/" in md
+    assert md.count("# Adres aanmaken") == 1

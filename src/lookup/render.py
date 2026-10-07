@@ -14,6 +14,7 @@ import contextlib
 import re
 import time
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 from playwright.async_api import BrowserContext, Frame, Page, Response
 
@@ -464,6 +465,35 @@ async def render_page(page: Page, site: Site, url: str, attempt: int = 1) -> Ren
     if data is None:
         return Rendered("EMPTY", "content-container verdween tijdens uitlezen")
     return Rendered("OK", data=data, response=resp)
+
+
+MARKDOWN_SUFFIXES = (".md", ".markdown", ".mdx")
+MARKDOWN_TYPES = ("text/markdown", "text/x-markdown", "text/plain")
+
+
+async def fetch_markdown(context: BrowserContext, url: str) -> Rendered | None:
+    """Haal een pagina op die al Markdown is (zonder browser); None als het geen Markdown is.
+
+    Veel documentatie (readme.io, Mintlify, GitBook) levert pagina's ook als .md
+    voor AI's; llms.txt linkt daarnaar. Die hoeven niet gerenderd te worden.
+    """
+    if not urlparse(url).path.lower().endswith(MARKDOWN_SUFFIXES):
+        return None
+    try:
+        r = await context.request.get(url, timeout=30_000)
+    except Exception:  # noqa: BLE001
+        return None
+    if r.status in (401, 403):
+        return Rendered("AUTH", f"HTTP {r.status}")
+    if r.status in (404, 410):
+        return Rendered("EMPTY", f"HTTP {r.status} (pagina bestaat niet)")
+    ctype = r.headers.get("content-type", "")
+    if not r.ok or not ctype.startswith(MARKDOWN_TYPES):
+        return None  # toch HTML: gewoon renderen
+    text = await r.text()
+    if len(text.strip()) < 50:
+        return Rendered("EMPTY", "Markdown-bestand is leeg")
+    return Rendered("OK", data={"markdown": text})
 
 
 async def download_images(

@@ -216,6 +216,10 @@ def route(path: str, host: str) -> tuple[int, str, str] | None:
         "/hc/en-us/articles/1": article("Getting started with Zendesk", section="/hc"),
         "/live/start": LIVE_PAGE,
         "/form/start": FORM_PAGE,
+        # Zoals Microsoft Learn/readme.io: eerst een menufilter, en de URL bevat de proefterm
+        "/form/handleiding-facturatie": FORM_PAGE.replace(
+            "<form ", "<input type=search placeholder='Filter by title'><form "
+        ),
         "/local/start": LOCAL_PAGE,
         "/none/start": article("Introductie handleiding", section="/none"),
     }

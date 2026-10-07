@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from markdownify import MarkdownConverter
@@ -344,3 +345,45 @@ def completeness(dom: dict, md: str, images_expected: int, images_saved: int) ->
             f"{s['iframes']} ingesloten frame(s)/video: inhoud daarvan staat niet in de tekst"
         )
     return {"coverage": coverage, "checks": checks, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Bronnen die al Markdown zijn (.md-pagina's, vaak gelinkt vanuit llms.txt)
+# ---------------------------------------------------------------------------
+
+_MD_IMG = re.compile(r'!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)')
+
+
+def markdown_title(md: str, fallback: str) -> str:
+    m = re.search(r"^#\s+(.+?)\s*#*\s*$", md, re.M)
+    return m.group(1).strip() if m else fallback
+
+
+def markdown_images(md: str, base_url: str) -> list[dict]:
+    """Afbeeldingen in Markdown, in dezelfde vorm als EXTRACT_JS ze geeft."""
+    return [
+        {
+            "idx": i,
+            "src": urljoin(base_url, m.group(2)),
+            "alt": m.group(1),
+            "w": 0,
+            "h": 0,
+            "cls": "",
+        }
+        for i, m in enumerate(_MD_IMG.finditer(md))
+    ]
+
+
+def localize_markdown_images(md: str, img_map: dict[int, str]) -> str:
+    """Vervang afbeeldingslinks door lokale paden; mislukte downloads worden gemeld."""
+    counter = iter(range(10**9))
+
+    def repl(m: re.Match) -> str:
+        local = img_map.get(next(counter))
+        if local:
+            return f"![{m.group(1)}]({local})"
+        if local == "":
+            return f"[afbeelding niet opgehaald: {m.group(2)}]"
+        return m.group(0)
+
+    return _MD_IMG.sub(repl, md)

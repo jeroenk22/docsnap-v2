@@ -123,7 +123,12 @@ de volledigheid (tekstdekking, tabellen, lijsten, code, koppen, afbeeldingen).
 
 Herkennen welke container de echte tekst bevat is oordeelswerk. Kiest `init` verkeerd, meldt
 `init` een selector die "afhangt van de positie op de pagina", of meldt `fetch` exit 4, exit 5 of
-een lage tekstdekking, laat dan een subagent met `model: opus` de diagnose doen. Geef hem:
+een lage tekstdekking, laat dan een subagent met `model: opus` de diagnose doen.
+
+Dat is duur (al snel 50.000–100.000 tokens), dus eerst de goedkope stappen: probeer `fetch` op
+een tweede artikel; is het probleem daar weg, dan lag het aan die ene pagina. Geef de subagent een
+gerichte opdracht (één bron, één probleem, maximaal ~5 `fetch`-pogingen) en meld zijn verbruik
+apart aan de gebruiker (het staat in het resultaat van de subagent). Geef hem:
 - het pad naar `~/.doc-lookup/sites/<bron>/site.yaml`,
 - de kandidatenlijst uit de `init`-uitvoer en de screenshot-paden,
 - de URL van een artikelpagina,
@@ -145,6 +150,9 @@ een lage tekstdekking, laat dan een subagent met `model: opus` de diagnose doen.
   Daarna `fetch` opnieuw draaien op die artikelpagina en het resultaat (volledigheid) melden.
 
 Gewoon lezen en antwoorden kan op het huidige model.
+
+Lijkt iets een fout in `docsnap-lookup` zelf (verkeerde melding, crash), pas dan de broncode niet
+aan vanuit een ander project: meld het aan de gebruiker met de URL, het commando en de uitvoer.
 
 ## Installatie (eenmalig per computer)
 

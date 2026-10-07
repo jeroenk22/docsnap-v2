@@ -98,6 +98,17 @@ STICKY_PAGE = (
     "<img class='loading' src='/img/nooit.png' width='600' height='400'></main></body></html>"
 )
 
+DOC_MD = """# Adres aanmaken
+
+Een geofence is een **cirkel** of een polygoon.
+
+![Kaart met geofence](/open/plaatje.png)
+
+| Veld | Verplicht |
+| --- | --- |
+| radiusMeters | ja |
+"""
+
 EMPTY_PAGE = "<html><body><main class='article-body'></main></body></html>"
 
 
@@ -135,6 +146,19 @@ class _Handler(BaseHTTPRequestHandler):
             return self._redirect(f"http://localhost:{port}/open/start")
         if self.path == "/login":
             return self._send(200, LOGIN_PAGE)
+        if self.path == "/open/doc.md":  # zoals readme.io/Mintlify: pagina als Markdown
+            return self._send(200, DOC_MD, "text/markdown; charset=utf-8")
+        if self.path == "/open/plaatje.png":
+            return self._send(200, _png(400, 300), "image/png")
+        if self.path == "/open/console":  # API-referentie met "Try it": los tokenveld
+            return self._send(
+                200,
+                STATIC_PAGE.replace(
+                    "</main>",
+                    "<div class='playground'><label>API token</label>"
+                    "<input type=password placeholder='Bearer token'><button>Try it</button></div></main>",
+                ),
+            )
         if self.path == "/open/sticky":
             return self._send(200, STICKY_PAGE)
         if self.path == "/open/custom":

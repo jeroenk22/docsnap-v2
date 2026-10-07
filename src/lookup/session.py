@@ -45,6 +45,22 @@ LOGIN_TEXT_RE = re.compile(
     re.I,
 )
 
+# Een zichtbaar wachtwoordveld mét een veld voor gebruikersnaam/e-mail ernaast. Alleen een
+# wachtwoordveld is vaak het tokenveld van een API-console ("Try it"), geen login.
+LOGIN_FORM_JS = r"""
+() => {
+  const visible = e => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; };
+  return [...document.querySelectorAll('input[type=password]')].filter(visible).some(pw => {
+    let box = pw.closest('form') || pw.parentElement;
+    for (let i = 0; i < 4 && box && !box.querySelector('input[type=email], input[type=text], input:not([type])'); i++)
+      box = box.parentElement;
+    return !!box && [...box.querySelectorAll('input[type=email], input[type=text], input:not([type])')]
+      .some(u => u !== pw && visible(u));
+  });
+}
+"""
+
 USER_FIELDS = [
     'input[type="email"]',
     'input[name="email"]',
@@ -112,9 +128,9 @@ async def is_auth_wall(
     if response is not None and response.status in (401, 403):
         return f"HTTP {response.status}"
     try:
-        if await page.locator("input[type=password]").first.is_visible(timeout=500):
-            return "wachtwoordveld zichtbaar"
-    except Exception:  # noqa: BLE001
+        if await page.evaluate(LOGIN_FORM_JS):
+            return "inlogformulier zichtbaar"
+    except Exception:  # noqa: BLE001  (pagina navigeert net)
         pass
     if root_found:
         return None

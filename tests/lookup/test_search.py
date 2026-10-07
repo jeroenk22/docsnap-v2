@@ -283,3 +283,49 @@ def test_portal_template_from_site_links(lookup_home) -> None:
     )
     assert portal_template(links[:2], site, {"TMS"}) is None
     assert portal_template(links, site, {"VIS"}) is None
+
+
+def test_learn_api_finds_url_inside_object(lookup_home) -> None:
+    """readme.io: "url": {"full": ..., "relative": ...} gaat voor "slug"."""
+    site = Site("x")
+    site.cfg = {"base_url": "https://dev.x.com/"}
+    item = {
+        "url": {
+            "full": "https://dev.x.com/reference/postplace",
+            "relative": "/reference/postplace",
+        },
+        "title": "Create a place",
+        "excerpt": "geofence",
+        "slug": "postplace",
+    }
+    captured = [
+        {
+            "url": "https://dev.x.com/api/search?query=geofence",
+            "method": "GET",
+            "body": None,
+            "headers": {},
+            "json": {"data": [item, item]},
+        }
+    ]
+    api = learn_api(captured, "geofence", site)
+    assert api["url_field"] == "url.full"
+    assert api["url"] == "https://dev.x.com/api/search?query={q}"
+
+
+def test_page_key_merges_markdown_and_html_versions() -> None:
+    from src.lookup.search import page_key
+
+    assert page_key("https://x.com/reference/a.md") == page_key(
+        "https://x.com/reference/a"
+    )
+    assert page_key("https://x.com/a/") == page_key("https://x.com/a")
+    assert page_key("https://x.com/v1/a") != page_key("https://x.com/v2/a")
+
+
+def test_search_box_skips_filter_field_and_term_in_start_url(docsite) -> None:
+    """Een menufilter is geen zoekbalk, en een startpagina met de term in de URL is geen
+    resultatenpagina (proefterm 'handleiding' staat in /form/handleiding-facturatie)."""
+    result = run("init", f"{docsite}/form/handleiding-facturatie", "--name", "bron")
+
+    assert result.exit_code == 0, result.output
+    assert "zoeken via: zoekresultatenpagina" in result.output

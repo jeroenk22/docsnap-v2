@@ -185,3 +185,27 @@ def test_is_positional() -> None:
     assert not is_positional("div.content:nth-of-type(6)")
     assert not is_positional("#main > div:nth-of-type(2)")
     assert not is_positional("div.markdown-body")
+
+
+def test_markdown_helpers() -> None:
+    from src.lookup.convert import (
+        localize_markdown_images,
+        markdown_images,
+        markdown_title,
+    )
+
+    md = (
+        '# Titel\n\n![a](img/a.png) en ![b](https://x.com/b.png "tip") en ![c](c.png)\n'
+    )
+    assert markdown_title(md, "x") == "Titel"
+    assert markdown_title("geen kop", "x") == "x"
+    imgs = markdown_images(md, "https://x.com/docs/page.md")
+    assert [i["src"] for i in imgs] == [
+        "https://x.com/docs/img/a.png",
+        "https://x.com/b.png",
+        "https://x.com/docs/c.png",
+    ]
+    out = localize_markdown_images(md, {0: "../images/p/a.png", 1: ""})
+    assert "![a](../images/p/a.png)" in out
+    assert "[afbeelding niet opgehaald: https://x.com/b.png]" in out
+    assert "![c](c.png)" in out  # geen download geprobeerd (icoon): ongewijzigd

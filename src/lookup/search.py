@@ -467,13 +467,23 @@ HREFS_JS = (
 )
 
 
+# Filtervelden voor het menu ("Filter pages", "Filter by title") zijn geen zoekfunctie
+FILTER_LABEL_JS = (
+    "e => [e.placeholder, e.getAttribute('aria-label'), e.name, e.id].join(' ')"
+)
+
+
 async def _first_visible(page: Page, selectors: list[str]) -> str | None:
     for sel in selectors:
         loc = page.locator(sel)
         with contextlib.suppress(Exception):
             for i in range(min(await loc.count(), 5)):
-                if await loc.nth(i).is_visible():
-                    return f"{sel} >> nth={i}"
+                el = loc.nth(i)
+                if not await el.is_visible():
+                    continue
+                if re.search(r"filter", await el.evaluate(FILTER_LABEL_JS) or "", re.I):
+                    continue
+                return f"{sel} >> nth={i}"
     return None
 
 
@@ -608,7 +618,15 @@ async def use_search_box(
                 hits = await _type_and_collect(page, sel, q, site, before, limit)
             except Exception:  # noqa: BLE001  (veld verdween, onbruikbaar, ...)
                 continue
-            searched = page.url.split("#")[0] != start.split("#")[0]
+            # Een resultatenpagina heeft de zoekterm in de URL (niet: een menufilter
+            # dat bij Enter naar de eerste pagina springt)
+            # en de pagina is echt veranderd (de startpagina kan de term zelf al bevatten)
+            variants = (quote(q), quote_plus(q))
+            moved = page.url.split("#")[0] != start.split("#")[0]
+            searched = moved and any(
+                v in urlparse(page.url).query or (v in page.url and v not in start)
+                for v in variants
+            )
             # Gelukt: resultaatlinks, een resultatenpagina, of een response met een
             # resultatenlijst (niet: telemetrie die de getypte tekst meestuurt)
             api_like = capture is not None and learn_api(capture, q, site) is not None
@@ -699,8 +717,24 @@ def _find_key(
     lowered = {k.lower().replace("-", "_"): k for k in item}
     for w in wanted:
         k = lowered.get(w)
-        if k is not None and isinstance(item[k], str | int) and str(item[k]):
+        if k is None:
+            continue
+        v = item[k]
+        if isinstance(v, str | int) and str(v):
             return prefix + k
+        if isinstance(v, dict):  # bv. "url": {"full": "...", "relative": "..."}
+            for sub in (
+                "full",
+                "absolute",
+                "href",
+                "url",
+                "relative",
+                "path",
+                "value",
+                "text",
+            ):
+                if isinstance(v.get(sub), str) and v[sub]:
+                    return f"{prefix}{k}.{sub}"
     if depth < 2:
         for k, v in item.items():
             if (
@@ -939,8 +973,22 @@ async def detect_search(
     search.update(await detect_platform_api(site, context, page))
     search.update(await probe_search_box(site, context, probe_term(title)))
     order = ["index", "confluence", "zendesk", "api", "results_url", "ui"]
+    if set(search.get("index", {})) == {"llms"}:
+        # llms.txt heeft alleen titels en korte beschrijvingen: een zoek-API die de
+        # volledige tekst doorzoekt gaat voor
+        order = ["confluence", "zendesk", "api", "index", "results_url", "ui"]
     search["methods"] = [m for m in order if m in search] + ["sitemap"]
     return search
+
+
+def page_key(url: str) -> str:
+    """Sleutel om dubbele resultaten samen te voegen: pagina.md is dezelfde pagina als pagina."""
+    p = urlparse(url)
+    return norm_url(
+        url.replace(p.path, p.path.removesuffix(".md"), 1)
+        if p.path.endswith(".md")
+        else url
+    )
 
 
 def section_bonus(url: str, base_url: str) -> float:
@@ -986,14 +1034,14 @@ async def run_search(
             except Exception as e:  # noqa: BLE001
                 report(f"  ! '{q}' via {METHOD_LABELS[name]} mislukt: {str(e)[:120]}")
                 continue
-            known = {norm_url(h["url"]) for h in hits}
-            new = [h for h in found if norm_url(h["url"]) not in known]
+            known = {page_key(h["url"]) for h in hits}
+            new = [h for h in found if page_key(h["url"]) not in known]
             if new:
                 hits += new
                 used.append(f"{METHOD_LABELS[name]} ({time.monotonic() - t0:.1f}s)")
         report(f'  - "{q}": {len(hits)} resultaten via {" + ".join(used) or "-"}')
         for rank, h in enumerate(hits[:limit]):
-            key = norm_url(h["url"])
+            key = page_key(h["url"])
             score = 1.0 - rank / max(limit, 1)
             if key in merged:
                 merged[key]["score"] += score
