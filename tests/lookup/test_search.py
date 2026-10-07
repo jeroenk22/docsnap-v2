@@ -257,3 +257,29 @@ def test_section_bonus_prefers_same_section() -> None:
         section_bonus("https://x.com/space/VIS/1/a", "https://x.com/space/TMS/2/b")
         == 0.25
     )
+
+
+def test_init_treats_403_on_probed_paths_as_absent(docsite) -> None:
+    """Sites die op onbekende paden 403 geven (zoals MendriX) mogen init niet laten crashen."""
+    result = run("init", f"{docsite}/f403/start", "--name", "bron")
+
+    assert result.exit_code == 0, result.output
+    assert "zoeken via:" in result.output
+
+
+def test_portal_template_from_site_links(lookup_home) -> None:
+    from src.lookup.search import portal_template
+
+    site = Site("x")
+    site.cfg = {"base_url": "https://support.x.nl/"}
+    links = [
+        "https://support.x.nl/space/TMS",
+        "https://x.atlassian.net/wiki/spaces/TMS/pages/93881915/Titel",
+        "https://support.x.nl/space/TMS/1307213836/Installatie+GLS",
+    ]
+    assert (
+        portal_template(links, site, {"TMS"})
+        == "https://support.x.nl/space/{space}/{id}"
+    )
+    assert portal_template(links[:2], site, {"TMS"}) is None
+    assert portal_template(links, site, {"VIS"}) is None

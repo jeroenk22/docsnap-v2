@@ -222,3 +222,13 @@ def test_interactive_login_times_out(docsite, monkeypatch) -> None:
 
     assert result.exit_code == 3
     assert "geen geslaagde login" in result.output
+
+
+def test_init_follows_redirect_to_other_host(docsite) -> None:
+    port = docsite.rsplit(":", 1)[-1]
+
+    result = run("init", f"{docsite}/moved", "--name", "verhuisd")
+
+    assert result.exit_code == 0, result.output
+    assert f"doorgestuurd naar http://localhost:{port}/open/start" in result.output
+    assert Site.load("verhuisd").base_url == f"http://localhost:{port}/open/start"

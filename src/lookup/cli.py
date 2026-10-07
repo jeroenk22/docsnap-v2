@@ -14,6 +14,7 @@ import re
 import sys
 import time
 from collections.abc import Callable
+from urllib.parse import urlparse
 
 import click
 
@@ -34,6 +35,7 @@ from .render import (
 )
 from .search import METHOD_LABELS, SearchAuthError, detect_search, run_search
 from .session import (
+    LOGIN_URL_RE,
     BrowserUnavailable,
     is_auth_wall,
     login_interactive,
@@ -152,6 +154,15 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
     async with open_context(site) as context:
         page = await context.new_page()
         resp = await goto(page, url)
+        final = urlparse(page.url)
+        if (
+            not refresh
+            and final.netloc != urlparse(url).netloc
+            and not LOGIN_URL_RE.search(page.url)
+        ):
+            # wiki.example.com -> support.example.com: de bron is de site waar je uitkomt
+            site.cfg["base_url"] = page.url
+            say(f"  doorgestuurd naar {page.url}; dat is voortaan de basis van de bron")
         say("[2/5] Login-muur controleren")
         # Eerst de eenduidige signalen, zodat een loginpagina niet 12s wacht
         wall = await is_auth_wall(page, resp, site, root_found=True)

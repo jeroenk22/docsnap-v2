@@ -243,7 +243,10 @@ async def detect_index(site: Site, context: BrowserContext) -> dict[str, str]:
     found: dict[str, str] = {}
     for kind, (name, parse) in INDEX_KINDS.items():
         for prefix in _prefixes(site.base_url):
-            text = await _get_text(context, prefix + name)
+            try:
+                text = await _get_text(context, prefix + name)
+            except SearchAuthError:  # 401/403 op een pad dat niet bestaat: geen index
+                continue
             if not text:
                 continue
             try:
@@ -274,9 +277,10 @@ def _confluence_space(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-async def search_confluence(
+async def _confluence_results(
     site: Site, context: BrowserContext, q: str, limit: int
-) -> list[dict]:
+) -> list[tuple[dict, str]]:
+    """Ruwe zoekresultaten van Confluence, elk met de URL zoals Confluence hem geeft."""
     api = site.get("search.confluence.api_base")
     cql = f'siteSearch ~ "{q}" AND type in (page, blogpost)'
     if space := site.get("search.confluence.space"):
@@ -287,11 +291,34 @@ async def search_confluence(
     if text is None:
         raise RuntimeError("Confluence-zoek-API gaf geen antwoord")
     data = json.loads(text)
-    base = jget(data, "_links.base") or api
+    base = str(jget(data, "_links.base") or api).rstrip("/")
     out = []
     for it in data.get("results", []):
         rel = it.get("url") or jget(it, "content._links.webui") or ""
-        url = rel if rel.startswith("http") else str(base).rstrip("/") + rel
+        out.append((it, rel if rel.startswith("http") else base + rel))
+    return out
+
+
+def _confluence_ids(it: dict, url: str) -> tuple[str, str]:
+    """(space-sleutel, pagina-id) van een Confluence-resultaat."""
+    page_id = str(jget(it, "content.id") or "")
+    if not page_id and (m := re.search(r"/pages/(\d+)", url)):
+        page_id = m.group(1)
+    space = str(jget(it, "content.space.key") or "")
+    if not space and (m := re.search(r"/spaces?/([^/]+)/", url)):
+        space = m.group(1)
+    return space, page_id
+
+
+async def search_confluence(
+    site: Site, context: BrowserContext, q: str, limit: int
+) -> list[dict]:
+    template = site.get("search.confluence.page_url")
+    out = []
+    for it, url in await _confluence_results(site, context, q, limit):
+        space, page_id = _confluence_ids(it, url)
+        if template and space and page_id:  # portaal voor Confluence: eigen URL-vorm
+            url = template.replace("{space}", space).replace("{id}", page_id)
         out.append(
             _hit(
                 url,
@@ -301,6 +328,26 @@ async def search_confluence(
             )
         )
     return out
+
+
+def portal_template(links: list[str], site: Site, spaces: set[str]) -> str | None:
+    """Leer de URL-vorm van een portaal voor Confluence uit links op de site.
+
+    Een link als https://support.x.nl/space/TMS/1307213836/Titel met een bekende
+    space-sleutel en een pagina-id wordt https://support.x.nl/space/{space}/{id}.
+    """
+    for link in links:
+        if not _same_site(link, site):
+            continue
+        parts = urlparse(link).path.split("/")
+        for i, part in enumerate(parts):
+            if part not in spaces:
+                continue
+            for j in range(i + 1, len(parts)):
+                if re.fullmatch(r"\d{5,}", parts[j]):
+                    path = "/".join([*parts[:i], "{space}", *parts[i + 1 : j], "{id}"])
+                    return _origin(site.base_url) + path
+    return None
 
 
 async def search_zendesk(
@@ -323,6 +370,25 @@ async def search_zendesk(
     ]
 
 
+async def _find_portal_template(page: Page, site: Site, spaces: set[str]) -> str | None:
+    """Zoek op de huidige pagina, en zo nodig op een space-pagina, naar portaallinks."""
+    links = await page.evaluate(HREFS_JS)
+    if template := portal_template(links, site, spaces):
+        return template
+    space_pages = [
+        u
+        for u in links
+        if _same_site(u, site)
+        and any(seg in spaces for seg in urlparse(u).path.split("/"))
+    ]
+    for u in space_pages[:2]:
+        with contextlib.suppress(Exception):
+            await goto(page, u)
+            if template := portal_template(await page.evaluate(HREFS_JS), site, spaces):
+                return template
+    return None
+
+
 async def detect_platform_api(site: Site, context: BrowserContext, page: Page) -> dict:
     """Probeer de zoek-API's van Confluence en Zendesk; geef werkende config terug."""
     found: dict = {}
@@ -334,9 +400,17 @@ async def detect_platform_api(site: Site, context: BrowserContext, page: Page) -
         trial = Site(site.name)
         trial.cfg = {**site.cfg, "search": {"confluence": cfg}}
         try:
-            await search_confluence(trial, context, "a", 1)
+            results = await _confluence_results(trial, context, "a", 10)
         except (RuntimeError, ValueError, SearchAuthError):
             continue
+        if any(not _same_site(url, site) for _, url in results):
+            # De API linkt naar het onderliggende Confluence (bv. x.atlassian.net),
+            # niet naar het portaal waar de gebruiker zit: leer de portaal-URL's
+            spaces = {_confluence_ids(it, url)[0] for it, url in results} - {""}
+            template = await _find_portal_template(page, site, spaces)
+            if not template:
+                continue  # links onbruikbaar; dan liever de zoekbalk van het portaal
+            cfg["page_url"] = template
         found["confluence"] = {k: v for k, v in cfg.items() if v}
         break
     if (
@@ -463,6 +537,9 @@ async def _type_and_collect(
     box = page.locator(sel)
     await box.focus()
     await box.fill("")
+    # Dropdowns tonen bij focus vaak al 'recent bekeken' of 'populair': geen resultaten
+    await asyncio.sleep(0.8)
+    before |= set(await page.evaluate(HREFS_JS))
     await box.press_sequentially(
         q, delay=40
     )  # sommige velden reageren alleen op toetsen

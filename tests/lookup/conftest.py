@@ -130,6 +130,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if found := searchsite.route(self.path, self.headers.get("Host", "")):
             return self._send(found[0], found[1], found[2])
+        if self.path == "/moved":  # zoals wiki.example.com -> support.example.com
+            port = self.headers.get("Host", "").rsplit(":", 1)[-1]
+            return self._redirect(f"http://localhost:{port}/open/start")
         if self.path == "/login":
             return self._send(200, LOGIN_PAGE)
         if self.path == "/open/sticky":

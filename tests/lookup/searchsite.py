@@ -127,6 +127,9 @@ def route(path: str, host: str) -> tuple[int, str, str] | None:
     origin = f"http://{host}"
     p = u.path
 
+    # Zoals MendriX: onbekende paden geven 403 in plaats van 404
+    if p.startswith("/f403/") and p.endswith((".json", ".js", ".txt", ".xml")):
+        return 403, "verboden", "text/plain"
     # MkDocs: /idx/start/ en /idx/search/search_index.json
     if p == "/idx/search/search_index.json":
         return _json(MKDOCS_INDEX)
@@ -219,6 +222,7 @@ def route(path: str, host: str) -> tuple[int, str, str] | None:
     if p in pages:
         return 200, pages[p], "text/html"
     for prefix in (
+        "/f403/",
         "/idx/",
         "/sph/",
         "/lt/",
