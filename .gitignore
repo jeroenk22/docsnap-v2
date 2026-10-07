@@ -35,6 +35,9 @@ test-results/
 output/
 *.md.bak
 
+# Referentie-prototype van doc-lookup (niet committen)
+_prototype/
+
 # OS
 .DS_Store
 Thumbs.db
