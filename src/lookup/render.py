@@ -110,40 +110,84 @@ STABILITY_JS = """
 """
 
 # Kandidaat-containers voor init: bekende selectors plus een dichtheidsheuristiek
-CANDIDATES_JS = """
+CANDIDATES_JS = r"""
 (known) => {
-  const out = [];
-  const seen = new Set();
-  const describe = (el) => {
-    if (el.id) return '#' + CSS.escape(el.id);
+  // Alleen gewone class-/id-namen in selectors; Tailwind ('md:flex', 'w-[3px]') niet
+  const PLAIN = /^[A-Za-z_][\w-]*$/;
+  // Gegenereerde classnamen veranderen bij elke release van de site: styled-components
+  // ('StyledRow-sc-xjsdg1-0', 'fJdEWO'), CSS-modules ('Content_body__v5MYy'), emotion ('css-1x2y3z'),
+  // en ids per pagina met een UUID of lang nummer ('media_single_container_31f43b4e-ab8d-...')
+  const HASHED = /(^|-)sc-[a-z0-9]+|__[A-Za-z0-9_-]{4,}$|^css-[a-z0-9]+$|^(?=[A-Za-z]{5,7}$)(?=.*[a-z])[A-Za-z]+[A-Z][A-Za-z]*$|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}|\d{5,}/;
+  const base = (el) => {
+    if (el.id && !HASHED.test(el.id)) return '#' + CSS.escape(el.id);
     let s = el.tagName.toLowerCase();
-    const cls = [...el.classList].filter(c => !/^(is-|has-|js-)/.test(c)).slice(0, 2);
-    if (cls.length) s += '.' + cls.map(c => CSS.escape(c)).join('.');
+    const cls = [...el.classList].filter(c => PLAIN.test(c) && !HASHED.test(c) && !/^(is-|has-|js-)/.test(c)).slice(0, 2);
+    if (cls.length) s += '.' + cls.join('.');
     const role = el.getAttribute('role'); if (role && !cls.length) s += `[role=${role}]`;
     return s;
   };
-  // Dialogen en cookie-/consentbanners zijn nooit de content
-  const OVERLAY = '[role=dialog], [aria-modal=true], [class*="dialog" i], [class*="modal" i], ' +
-                  '[class*="cookie" i], [id*="cookie" i], [class*="consent" i], [id*="consent" i]';
+  const step = (el) => {
+    const same = el.parentElement ? [...el.parentElement.children].filter(c => c.tagName === el.tagName) : [];
+    return base(el) + (same.length > 1 && !el.id ? `:nth-of-type(${same.indexOf(el) + 1})` : '');
+  };
+  const unique = (s) => { try { return document.querySelectorAll(s).length === 1; } catch (e) { return false; } };
+  // Unieke selector: zo kort mogelijk; dan stabiel met een ouder ervoor ('#main div.content');
+  // pas als laatste een pad met posities (kan per pagina verschillen)
+  const describe = (el) => {
+    const b = base(el);
+    if (unique(b)) return b;
+    for (let e = el.parentElement; e && e !== document.body; e = e.parentElement) {
+      const pb = base(e);
+      if ((e.id || pb.includes('.')) && unique(pb + ' ' + b)) return pb + ' ' + b;
+    }
+    const parts = [step(el)];
+    for (let e = el.parentElement; e && e !== document.documentElement; e = e.parentElement) {
+      if (unique(parts.join(' > '))) break;
+      parts.unshift(e.id ? base(e) : step(e));
+    }
+    return parts.join(' > ');
+  };
+  // Dialogen en cookie-/consentbanners zijn nooit de content. Op hele classnamen
+  // testen: Tailwind-classes als 'has-[.modal]:hidden' staan op gewone wrappers.
+  const OVERLAY_NAME = /^(?:[a-z0-9]+[-_])*(?:dialog|modal|cookie|consent)(?:[-_][a-z0-9]+)*$/i;
+  const isOverlay = (el) => {
+    for (let e = el; e && e !== document.body; e = e.parentElement) {
+      if (e.getAttribute('role') === 'dialog' || e.getAttribute('aria-modal') === 'true') return true;
+      if ([...e.classList].some(c => OVERLAY_NAME.test(c)) || OVERLAY_NAME.test(e.id || '')) return true;
+    }
+    return false;
+  };
+  const textLen = (el) => (el.innerText || '').replace(/\s+/g, ' ').trim().length;
+  const linkLen = (el) => [...el.querySelectorAll('a')].reduce((n, a) => n + (a.innerText || '').length, 0);
+
+  // Tekst zonder links, en zonder navigatie/zijbalken erbinnen (anders wint een wrapper met menu)
+  const NAV = 'nav, aside, [role=navigation]';
+  const navLen = (el) => [...el.querySelectorAll(NAV)]
+    .filter(n => !n.parentElement.closest(NAV) || !el.contains(n.parentElement.closest(NAV)))
+    .reduce((n, x) => n + (x.innerText || '').length, 0);
+  const score = (el) => { const t = textLen(el); return t * (1 - Math.min(1, linkLen(el) / Math.max(t, 1))) - navLen(el); };
+
+  const found = [];
   const add = (el, how) => {
-    if (!el || seen.has(el) || el.closest(OVERLAY)) return; seen.add(el);
-    const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
-    const links = [...el.querySelectorAll('a')].reduce((n, a) => n + (a.innerText || '').length, 0);
-    out.push({selector: describe(el), how, chars: t.length,
-              link_ratio: t.length ? +(links / t.length).toFixed(2) : 1,
-              headings: el.querySelectorAll('h1,h2,h3').length, preview: t.slice(0, 140)});
+    if (!el || found.some(f => f.el === el) || isOverlay(el)) return;
+    const chars = textLen(el);
+    if (chars > 0) found.push({el, how, chars, score: score(el)});
   };
   for (const s of known) { try { add(document.querySelector(s), 'bekend: ' + s); } catch (e) {} }
-  const blocks = [...document.querySelectorAll('div, section, article, main')]
-    .filter(el => !el.closest('nav, header, footer, aside') && !el.closest(OVERLAY));
-  blocks.map(el => {
-      const t = (el.innerText || '').length;
-      const links = [...el.querySelectorAll('a')].reduce((n, a) => n + (a.innerText || '').length, 0);
-      return {el, score: t * (1 - Math.min(1, links / Math.max(t, 1))) - el.querySelectorAll('nav').length * 500};
-    })
-    .sort((a, b) => b.score - a.score).slice(0, 4).forEach(x => add(x.el, 'dichtheid'));
-  return out.filter(c => c.chars > 0).sort((a, b) =>
-      (b.chars * (1 - b.link_ratio)) - (a.chars * (1 - a.link_ratio))).slice(0, 8);
+  [...document.querySelectorAll('div, section, article, main')]
+    .filter(el => !el.closest('nav, header, footer, aside') && !isOverlay(el))
+    .map(el => ({el, score: score(el)}))
+    .sort((a, b) => b.score - a.score).slice(0, 6).forEach(x => add(x.el, 'dichtheid'));
+
+  // Wrapper met (vrijwel) dezelfde tekst als een kandidaat erbinnen: de binnenste is specifieker
+  const kept = found.filter(a => !found.some(b => b !== a && a.el.contains(b.el) && b.chars >= 0.97 * a.chars));
+  return kept.sort((a, b) => b.score - a.score).slice(0, 8).map(({el, how, chars}) => {
+    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    return {selector: describe(el), how, chars,
+            link_ratio: chars ? +(linkLen(el) / chars).toFixed(2) : 1,
+            nav_chars: navLen(el),
+            headings: el.querySelectorAll('h1,h2,h3').length, preview: t.slice(0, 140)};
+  });
 }
 """
 
@@ -154,12 +198,23 @@ EXTRACT_JS = """
   const clone = root.cloneNode(true);
   for (const r of removeSels) { try { clone.querySelectorAll(r).forEach(e => e.remove()); } catch (e) {} }
   clone.querySelectorAll('script, style, noscript, template').forEach(e => e.remove());
+  // Kopieerknoppen bij codeblokken ('Copy', 'Copy to clipboard')
+  clone.querySelectorAll('button, [role=button]').forEach(b => {
+    if (/^(copy|copied|kopieer|kopiëren|gekopieerd)( to clipboard| code)?!?$/i.test((b.textContent || '').trim())
+        || /copy|clipboard/i.test(b.getAttribute('aria-label') || '')) b.remove(); });
   // Permalink-ankers bij koppen (MkDocs, Sphinx, Docusaurus): ¶, #, of een icoon-glyph
   // (icoonfonts gebruiken het privé Unicode-bereik U+E000-U+F8FF)
   clone.querySelectorAll('a.headerlink, a.hash-link').forEach(a => a.remove());
   clone.querySelectorAll('h1 a[href^="#"], h2 a[href^="#"], h3 a[href^="#"], h4 a[href^="#"], h5 a[href^="#"], h6 a[href^="#"]').forEach(a => {
-    if (/^[\\s¶#§\\u{1F517}\\uE000-\\uF8FF]*$/u.test(a.textContent || '')) a.remove(); });
+    if (/^[\\s\\u200B-\\u200D\\uFEFF¶#§\\u{1F517}\\uE000-\\uF8FF]*$/u.test(a.textContent || '')) a.remove(); });
 
+  // AI-samenvattings- en 'Ask AI'-widgets van de site zelf horen niet bij de documentatie.
+  // Alleen echte classnamen (geen Tailwind zoals 'group/ask-ai'), en nooit iets met koppen
+  // of veel tekst: dan is het waarschijnlijk toch content.
+  const AI_CLASS = /^(?:[a-z0-9]+[-_])*(?:ai[-_]?summary|ask[-_]?ai)(?:[-_][a-z0-9]+)*$/i;
+  clone.querySelectorAll('[class]').forEach(e => {
+    if ([...e.classList].some(c => AI_CLASS.test(c)) && !e.querySelector('h1,h2,h3,h4,h5,h6')
+        && (e.textContent || '').length < 2000) e.remove(); });
   // Sticky-header-kopieën: een tabel met alleen de koprij, direct gevolgd door de echte tabel
   const rowText = (r) => (r ? r.textContent : '').replace(/\s+/g, ' ').trim();
   const tables = [...clone.querySelectorAll('table')];
@@ -243,6 +298,37 @@ EXTRACT_JS = """
   };
 }
 """
+
+
+def choose_container(cands: list[dict]) -> dict | None:
+    """Kies de content-container uit de kandidaten van CANDIDATES_JS.
+
+    Voorkeur: de meest specifieke bekende container (volgorde van
+    DEFAULT_CONTENT_SELECTORS, dus .article-body vóór main), als die weinig
+    links bevat en minstens 60% van de tekst van de grootste zulke kandidaat.
+    Anders de beste kandidaat volgens de dichtheidsheuristiek.
+    """
+    known = [
+        c
+        for c in cands
+        if c["how"].startswith("bekend: ")
+        and c["chars"] >= 200
+        and c["link_ratio"] < 0.5
+    ]
+    if known:
+        most = max(c["chars"] for c in known)
+        order = {s: i for i, s in enumerate(DEFAULT_CONTENT_SELECTORS)}
+        known.sort(
+            key=lambda c: order.get(c["how"].removeprefix("bekend: "), len(order))
+        )
+        return next(c for c in known if c["chars"] >= 0.6 * most)
+    return cands[0] if cands else None
+
+
+def is_positional(selector: str) -> bool:
+    """Wijst de selector alleen via posities (geen id of class) naar de container?"""
+    last = selector.split(">")[-1].split(" ")[-1]
+    return ":nth-of-type" in selector and "#" not in selector and "." not in last
 
 
 def content_selectors(site: Site) -> list[str]:
@@ -350,11 +436,10 @@ async def render_page(page: Page, site: Site, url: str, attempt: int = 1) -> Ren
         return Rendered("AUTH", wall, response=resp)
 
     if not sel or chars < min_chars:
-        if attempt == 1:  # laadt traag: nog eens, met langer wachten en scrollen
-            await _scroll_to_bottom(page)
-            return await render_page(page, site, url, attempt=2)
         configured = site.get("content.selector")
         if configured and not sel:
+            # Staat er wel duidelijk content, dan is de structuur veranderd en helpt
+            # langer wachten niet
             cands = await page.evaluate(CANDIDATES_JS, DEFAULT_CONTENT_SELECTORS)
             big = [c for c in cands if c["chars"] > 300 and c["link_ratio"] < 0.5]
             if big:
@@ -362,6 +447,9 @@ async def render_page(page: Page, site: Site, url: str, attempt: int = 1) -> Ren
                     "STRUCTURE",
                     f"selector '{configured}' vindt niets; kandidaat: {big[0]['selector']}",
                 )
+        if attempt == 1:  # laadt traag: nog eens, met langer wachten en scrollen
+            await _scroll_to_bottom(page)
+            return await render_page(page, site, url, attempt=2)
         return Rendered("EMPTY", f"pagina bleef leeg ({chars} tekens na 2 pogingen)")
 
     await _scroll_to_bottom(page)  # lazy afbeeldingen en content laden

@@ -76,9 +76,9 @@ SOFT_WALL_PAGE = (
 )
 # Content in een onbekende container: de dichtheidsheuristiek moet hem vinden
 CUSTOM_PAGE = (
-    "<html><body><div class='kb-text'><h1>Orders</h1><p>"
+    "<html><body><div class='has-[.modal]:overflow-hidden'><div class='kb-text'><h1>Orders</h1><p>"
     + "Een order bevat een of meer zendingen met adressen en goederen. " * 6
-    + f"</p></div>{COOKIE_DIALOG}</body></html>"
+    + f"</p></div></div>{COOKIE_DIALOG}</body></html>"
 )
 
 # Zoals MendriX/Confluence: sticky-header-kopie van een tabel en een lazy afbeelding
@@ -89,6 +89,10 @@ STICKY_PAGE = (
     + "</p><div class='sticky_header'><table><tr><th>Veld</th><th>Uitleg</th></tr>"
     "</table></div><table><tr><th>Veld</th><th>Uitleg</th></tr>"
     "<tr><td>Poort</td><td>Standaard 5561</td></tr></table>"
+    "<div class='group/ask-ai flex'><p>Poort en host stel je in op het tabblad Koppeling.</p>"
+    "</div>"
+    "<div class='expandable-message ai_summary_expandable'><p>Summarize page</p>"
+    "<p>AI may give incorrect answers.</p></div>"
     "<img class='loading' src='/img/nooit.png' width='600' height='400'></main></body></html>"
 )
 

@@ -124,6 +124,8 @@ def test_fetch_drops_sticky_table_copy_and_ignores_lazy_img_loader(docsite) -> N
         site.pages_dir / f"{site.index[f'{docsite}/open/sticky']['slug']}.md"
     ).read_text(encoding="utf-8")
     assert md.count("| Veld | Uitleg |") == 1
+    assert "Summarize page" not in md  # AI-widget van de site weggelaten
+    assert "tabblad Koppeling" in md  # Tailwind 'group/ask-ai' is geen AI-widget
     assert "[afbeelding niet opgehaald: " in md  # mislukte download wordt gemeld
     assert "1 afbeelding(en) niet opgehaald" in result.output
 

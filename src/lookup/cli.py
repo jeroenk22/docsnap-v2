@@ -21,9 +21,11 @@ from .render import (
     CANDIDATES_JS,
     DEFAULT_CONTENT_SELECTORS,
     PLATFORM_DEFAULTS,
+    choose_container,
     detect_platform,
     download_images,
     goto,
+    is_positional,
     render_page,
     screenshot,
     wait_until_stable,
@@ -176,16 +178,7 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
         platform = detect_platform(await page.content(), page.url)
         site.cfg["platform"] = platform
         cands = await page.evaluate(CANDIDATES_JS, DEFAULT_CONTENT_SELECTORS)
-        chosen = next(
-            (
-                c
-                for c in cands
-                if c["how"].startswith("bekend")
-                and c["chars"] >= 200
-                and c["link_ratio"] < 0.5
-            ),
-            cands[0] if cands else None,
-        )
+        chosen = choose_container(cands)
         content = site.cfg.setdefault("content", {})
         if chosen:
             content["selector"] = chosen["selector"]
@@ -200,6 +193,12 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
             say(
                 f"   {mark} {c['selector']} | {c['chars']} | {c['link_ratio']} | "
                 f"{c['headings']} | {c['preview'][:70]}"
+            )
+
+        if chosen and is_positional(chosen["selector"]):
+            warn(
+                f"selector '{chosen['selector']}' hangt af van de positie op de pagina en kan op "
+                "andere pagina's naar het verkeerde blok wijzen; laat de structuur controleren"
             )
 
         say("[4/4] Opslaan")
@@ -399,7 +398,8 @@ async def fetch(site_name: str, urls: tuple[str, ...], no_images: bool) -> int:
         say(f"PROBLEEM {url}: {msg}")
     if exit_code == EXIT_STRUCTURE:
         say(
-            f"Structuur gewijzigd. Herken opnieuw met: init {site.base_url} --name {site.name} --refresh"
+            "Structuur gewijzigd. Herken opnieuw met: init "
+            f"{site.get('structure.sample_url', site.base_url)} --name {site.name} --refresh"
         )
     site.log(
         site.usage_path,

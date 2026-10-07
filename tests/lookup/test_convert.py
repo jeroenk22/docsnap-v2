@@ -145,3 +145,43 @@ def test_completeness_reports_missing_text_tables_and_images() -> None:
     assert "lijstitems 0/10" in joined
     assert "2 afbeelding(en) niet opgehaald" in joined
     assert "ingesloten frame" in joined
+
+
+def test_choose_container_prefers_most_specific_known_selector() -> None:
+    from src.lookup.render import choose_container
+
+    def cand(how: str, chars: int, link_ratio: float = 0.05) -> dict:
+        return {
+            "selector": how.split(": ")[-1],
+            "how": how,
+            "chars": chars,
+            "link_ratio": link_ratio,
+        }
+
+    main = cand("bekend: main", 10_000)
+    article = cand("bekend: .article-body", 8_000)
+    tiny = cand("bekend: .wiki-content", 1_000)
+    assert choose_container([main, tiny, article]) is article  # specifiek en >= 60%
+    assert choose_container([main, tiny]) is main  # .wiki-content te klein
+    nav = cand("bekend: #content", 5_000, link_ratio=0.8)
+    dense = cand("dichtheid", 4_000)
+    assert choose_container([nav, dense]) is nav  # beste score als niets bekends past
+    assert choose_container([]) is None
+
+
+def test_completeness_ignores_headings_and_lists_inside_code() -> None:
+    md = "## Echt\n\n```yaml\n# commentaar\n- item: 1\n```\n\n- echt item\n"
+    result = completeness(
+        {"text_all": "Echt echt item", "stats": {"headings": 1, "li": 1}}, md, 0, 0
+    )
+    assert result["checks"]["koppen"] == "1/1"
+    assert result["checks"]["lijstitems"] == "1/1"
+
+
+def test_is_positional() -> None:
+    from src.lookup.render import is_positional
+
+    assert is_positional("div:nth-of-type(4) > div > div:nth-of-type(3) > div")
+    assert not is_positional("div.content:nth-of-type(6)")
+    assert not is_positional("#main > div:nth-of-type(2)")
+    assert not is_positional("div.markdown-body")

@@ -303,8 +303,14 @@ def completeness(dom: dict, md: str, images_expected: int, images_saved: int) ->
     )
     # Fences in callouts (> ```) en lijsten (  ```) tellen ook mee
     md_pre = len(re.findall(r"^[ \t>]*(```|````)", md, re.M)) // 2 + md.count("<pre")
-    md_li = len(re.findall(r"^\s*(?:[-*+]|\d+[.)])\s+", md, re.M)) + md.count("<li")
-    md_head = len(re.findall(r"^#{1,6}\s", md, re.M)) + len(re.findall(r"<h[1-6]", md))
+    # Ook binnen callouts (> ) en ingesprongen blokken meetellen, maar niet in codeblokken
+    prose = re.sub(r"^([ \t>]*)(```+).*?^\1\2[ \t]*$", "", md, flags=re.M | re.S)
+    md_li = len(re.findall(r"^[ \t>]*(?:[-*+]|\d+[.)])\s+", prose, re.M)) + prose.count(
+        "<li"
+    )
+    md_head = len(re.findall(r"^[ \t>]*#{1,6}\s", prose, re.M)) + len(
+        re.findall(r"<h[1-6]", prose)
+    )
 
     checks = {
         "tekstdekking": f"{coverage * 100:.1f}%",
@@ -325,7 +331,9 @@ def completeness(dom: dict, md: str, images_expected: int, images_saved: int) ->
         )
     if md_pre < s.get("pre", 0):
         warnings.append(f"codeblokken {md_pre}/{s['pre']}")
-    if s.get("li", 0) and md_li < s["li"] * 0.9:
+    # Lijststructuur pas melden als er ook tekst mist; anders zijn het lijstjes in
+    # code-annotaties of tabbladkoppen die als tekst behouden zijn
+    if s.get("li", 0) and md_li < s["li"] * 0.9 and coverage < 0.995:
         warnings.append(f"lijstitems {md_li}/{s['li']}")
     if images_saved < images_expected:
         warnings.append(
