@@ -156,7 +156,10 @@ async def test_browser_discover_pages_respects_path_prefix() -> None:
     mock_context = AsyncMock()
     mock_context.new_page = AsyncMock(return_value=mock_page)
 
-    discovered = await _browser_discover_pages(mock_context, base_url)
+    # _wait_for_js_content pollt eval_on_selector_all tot de link-count stabiel is;
+    # patchen zodat het de gemockte link-lijsten niet opgebruikt.
+    with patch("src.scraper._wait_for_js_content", AsyncMock()):
+        discovered = await _browser_discover_pages(mock_context, base_url)
 
     assert "https://support.example.com/space/API/page-one" in discovered
     assert "https://support.example.com/space/API/page-two" in discovered
@@ -195,7 +198,10 @@ async def test_browser_discover_pages_deduplicates_redirect_variants() -> None:
     mock_context = AsyncMock()
     mock_context.new_page = AsyncMock(return_value=mock_page)
 
-    discovered = await _browser_discover_pages(mock_context, base_url)
+    # _wait_for_js_content pollt eval_on_selector_all tot de link-count stabiel is;
+    # patchen zodat het de gemockte link-lijsten niet opgebruikt.
+    with patch("src.scraper._wait_for_js_content", AsyncMock()):
+        discovered = await _browser_discover_pages(mock_context, base_url)
 
     # Canonical URL moet aanwezig zijn; ID en canonical mogen NIET allebei aanwezig zijn
     assert canonical_url in discovered
@@ -430,3 +436,73 @@ async def test_scrape_pages_detects_bot_challenge_and_opens_headed() -> None:
         )
 
     assert launched_headless_values == [False]
+
+
+@pytest.mark.parametrize(
+    "urls,expected",
+    [
+        (
+            [
+                "https://x.com/display/API/Page+One",
+                "https://x.com/display/API/Page+Two",
+            ],
+            "/display/API",
+        ),
+        (["https://x.com/a/b", "https://x.com/c/d"], ""),
+        (["https://x.com/", ""], ""),
+        (["https://x.com/Docs/a", "https://x.com/docs/b"], "/Docs"),
+    ],
+)
+def test_common_path_prefix(urls: list[str], expected: str) -> None:
+    """_common_path_prefix geeft het diepste gedeelde pad (hoofdletterongevoelig)."""
+    from src.scraper import _common_path_prefix
+
+    assert _common_path_prefix(urls) == expected
+
+
+@pytest.mark.asyncio
+async def test_wait_for_js_content_returns_when_link_count_stable() -> None:
+    """_wait_for_js_content stopt zodra het aantal links stabiel blijft."""
+    from src.scraper import _wait_for_js_content
+
+    page = AsyncMock()
+    page.eval_on_selector_all = AsyncMock(side_effect=[1, 5, 5, 5, 5, 5])
+
+    await _wait_for_js_content(page, stable_for=0.0, timeout=5.0)
+
+    # 1 → 5 verandert, daarna is 5 direct "stabiel" bij stable_for=0
+    assert page.eval_on_selector_all.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_claude_identify_nav_links_parses_fenced_json() -> None:
+    """Claude's antwoord in een ```json fence wordt geparsed tot een URL-lijst."""
+    from src.scraper import _claude_identify_nav_links
+
+    message = MagicMock()
+    message.content = [
+        MagicMock(text='```json\n["https://x.com/display/API/A", 42]\n```')
+    ]
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=message)
+
+    with patch("anthropic.AsyncAnthropic", return_value=client):
+        result = await _claude_identify_nav_links(
+            ["https://x.com/display/API/A", "https://x.com/login"],
+            "https://x.com/space/API",
+        )
+
+    assert result == ["https://x.com/display/API/A"]
+
+
+@pytest.mark.asyncio
+async def test_claude_identify_nav_links_returns_empty_on_error() -> None:
+    """Bij een API-fout of zonder links geeft de functie een lege lijst."""
+    from src.scraper import _claude_identify_nav_links
+
+    assert await _claude_identify_nav_links([], "https://x.com") == []
+
+    client = MagicMock()
+    client.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch("anthropic.AsyncAnthropic", return_value=client):
+        assert await _claude_identify_nav_links(["https://x.com/a"], "https://x.com") == []
