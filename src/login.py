@@ -6,6 +6,7 @@ Ondersteunde modi:
 - form:   automatisch form-login met user/pass
 - manual: gebruiker logt zelf in, tool wacht op ENTER
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

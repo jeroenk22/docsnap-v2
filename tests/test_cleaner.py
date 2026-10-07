@@ -1,4 +1,5 @@
 """Tests voor de Claude API content cleaner."""
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,7 +59,9 @@ async def test_clean_single_page_empty_response(sample_page: ScrapedPage) -> Non
 
 
 @pytest.mark.asyncio
-async def test_clean_single_page_large_html_uses_chunking(sample_page: ScrapedPage) -> None:
+async def test_clean_single_page_large_html_uses_chunking(
+    sample_page: ScrapedPage,
+) -> None:
     """Grote HTML wordt in meerdere chunks verwerkt (één Claude-call per chunk)."""
     from src.cleaner import MAX_HTML_CHARS
 
@@ -89,6 +92,7 @@ async def test_clean_single_page_large_html_uses_chunking(sample_page: ScrapedPa
 # ---------------------------------------------------------------------------
 # Tests voor _split_html_into_chunks
 # ---------------------------------------------------------------------------
+
 
 def test_split_html_small_input_returns_single_chunk() -> None:
     """HTML kleiner dan max_chars geeft één chunk terug."""
@@ -132,6 +136,7 @@ def test_split_html_empty_chunks_filtered() -> None:
 # Test voor _call_claude
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_call_claude_returns_text() -> None:
     """_call_claude geeft de text van de eerste content-block terug."""
@@ -145,7 +150,9 @@ async def test_call_claude_returns_text() -> None:
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=mock_message)
 
-    result = await _call_claude(mock_client, "https://example.com", "Title", "<p>html</p>")
+    result = await _call_claude(
+        mock_client, "https://example.com", "Title", "<p>html</p>"
+    )
     assert result == "# Result"
     mock_client.messages.create.assert_called_once()
 
@@ -154,9 +161,15 @@ async def test_call_claude_returns_text() -> None:
 async def test_clean_pages_reports_progress_and_summary(capsys) -> None:
     """clean_pages print per-pagina progress en eindtotaal."""
     pages = [
-        ScrapedPage(url="https://docs.example.com/a", html="<main>content a</main>", title="A"),
-        ScrapedPage(url="https://docs.example.com/b", html="<main>content b</main>", title="B"),
-        ScrapedPage(url="https://docs.example.com/empty", html="<main></main>", title="Empty"),
+        ScrapedPage(
+            url="https://docs.example.com/a", html="<main>content a</main>", title="A"
+        ),
+        ScrapedPage(
+            url="https://docs.example.com/b", html="<main>content b</main>", title="B"
+        ),
+        ScrapedPage(
+            url="https://docs.example.com/empty", html="<main></main>", title="Empty"
+        ),
     ]
 
     call_count = [0]

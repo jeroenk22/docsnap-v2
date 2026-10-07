@@ -1,4 +1,5 @@
 """Tests voor sitemap/link discovery."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -57,7 +58,9 @@ def test_parse_sitemap_xml_empty():
 
 def test_parse_sitemap_xml_no_loc_tags():
     """Sitemap zonder <loc> tags geeft lege lijst."""
-    urls = _parse_sitemap_xml("<urlset><url></url></urlset>", "https://docs.example.com")
+    urls = _parse_sitemap_xml(
+        "<urlset><url></url></urlset>", "https://docs.example.com"
+    )
     assert urls == []
 
 
@@ -79,6 +82,7 @@ def test_parse_sitemap_xml_filters_non_html():
 # ---------------------------------------------------------------------------
 # Tests voor discover_pages (async, httpx gemockt)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_discover_pages_uses_sitemap_when_available() -> None:
@@ -109,7 +113,9 @@ async def test_discover_pages_uses_sitemap_when_available() -> None:
 @pytest.mark.asyncio
 async def test_discover_pages_falls_back_to_crawl_when_no_sitemap() -> None:
     """discover_pages valt terug op link-crawl als er geen sitemap is."""
-    page_html = '<html><body><a href="/guide">Guide</a><a href="/api">API</a></body></html>'
+    page_html = (
+        '<html><body><a href="/guide">Guide</a><a href="/api">API</a></body></html>'
+    )
 
     no_sitemap_resp = MagicMock()
     no_sitemap_resp.status_code = 404
@@ -144,8 +150,7 @@ async def test_discover_pages_falls_back_to_crawl_when_no_sitemap() -> None:
 async def test_discover_pages_respects_max_pages() -> None:
     """discover_pages geeft maximaal max_pages resultaten terug."""
     urls = "\n".join(
-        f"  <url><loc>https://docs.example.com/page{i}</loc></url>"
-        for i in range(100)
+        f"  <url><loc>https://docs.example.com/page{i}</loc></url>" for i in range(100)
     )
     sitemap_xml = f"""<?xml version="1.0"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

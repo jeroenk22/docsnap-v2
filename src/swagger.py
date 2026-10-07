@@ -8,6 +8,7 @@ Twee detectie-paden:
    Werkt voor: (a) swagger achter login, (b) Confluence-pagina's met een
    embedded swagger-macro (com.confluence.swagger.api.document).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -98,7 +99,9 @@ def _url_looks_like_api_portal(url: str) -> bool:
     from urllib.parse import urlparse
 
     path = urlparse(url).path.lower()
-    return any(kw in path for kw in ("/dev", "/api", "/docs", "/swagger", "/openapi", "/redoc"))
+    return any(
+        kw in path for kw in ("/dev", "/api", "/docs", "/swagger", "/openapi", "/redoc")
+    )
 
 
 def _has_swagger_ui(html: str) -> bool:
@@ -169,6 +172,7 @@ def _looks_like_yaml_spec(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # Playwright-gebaseerde detectie (voor auth sites en Confluence embeds)
 # ---------------------------------------------------------------------------
+
 
 class SwaggerDetected(Exception):
     """Raised vanuit scraper wanneer een swagger spec gevonden is na login."""
@@ -276,7 +280,9 @@ async def _detect_via_browser_intercept(url: str) -> dict | None:
             if response.status == 200 and "json" in ct:  # type: ignore[attr-defined]
                 data = await response.json()  # type: ignore[attr-defined]
                 if _is_valid_openapi_spec(data):
-                    spec_found.append({"url": response.url, "format": "json", "spec": data})  # type: ignore[attr-defined]
+                    spec_found.append(
+                        {"url": response.url, "format": "json", "spec": data}
+                    )  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
             pass
 
@@ -290,6 +296,7 @@ async def _detect_via_browser_intercept(url: str) -> dict | None:
                 await page.goto(url, wait_until="networkidle", timeout=30_000)
             # Korte extra wacht voor Swagger UIs die de spec lazily laden
             import asyncio
+
             await asyncio.sleep(2)
             await browser.close()
     except Exception:  # noqa: BLE001

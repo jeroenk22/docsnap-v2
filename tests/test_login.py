@@ -1,4 +1,5 @@
 """Tests voor login strategieën."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +17,9 @@ def test_create_login_strategy_none():
 
 def test_create_login_strategy_form_valid():
     """Mode 'form' met credentials maakt correcte strategie aan."""
-    strategy = create_login_strategy("form", username="user@test.com", password="geheim")
+    strategy = create_login_strategy(
+        "form", username="user@test.com", password="geheim"
+    )
     assert strategy.mode == "form"
     assert strategy.username == "user@test.com"
     assert strategy.password == "geheim"
@@ -53,6 +56,7 @@ def test_login_strategy_dataclass():
 # Tests voor apply_login
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_apply_login_none_skips_navigation() -> None:
     """apply_login met mode 'none' navigeert niet naar de login URL."""
@@ -76,7 +80,9 @@ async def test_apply_login_form_fills_and_submits() -> None:
     mock_page.locator = MagicMock(return_value=mock_locator)
     mock_page.wait_for_load_state = AsyncMock()
 
-    strategy = LoginStrategy(mode="form", username="user@test.com", password="geheim123")
+    strategy = LoginStrategy(
+        mode="form", username="user@test.com", password="geheim123"
+    )
     await apply_login(mock_page, strategy, "https://docs.example.com/login")
 
     mock_page.goto.assert_called_once_with(

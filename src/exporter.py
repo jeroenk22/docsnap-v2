@@ -6,6 +6,7 @@ Ondersteunde formaten:
 - files:    één .md bestand per pagina (in submap)
 - pdf:      één PDF (vereist 'pip install docsnap-v2[pdf]')
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -125,7 +126,9 @@ def _export_swagger(swagger_result: dict, out_dir: Path, project_name: str) -> N
         json_dir = out_dir / "json"
         json_dir.mkdir(parents=True, exist_ok=True)
         out_file = json_dir / f"{base}.json"
-        out_file.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
+        out_file.write_text(
+            json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     print(f"✅  OpenAPI spec opgeslagen: {out_file}")
 

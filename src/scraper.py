@@ -8,6 +8,7 @@ Per pagina:
 4. Klik alle accordions / collapsible elementen open
 5. Geef de volledige HTML terug
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -68,7 +69,9 @@ async def scrape_pages(
     # Probe: controleer of de startpagina bot-bescherming heeft.
     # Als ja, schakel over naar headed mode zodat de gebruiker de challenge kan oplossen.
     probe_url = start_url or (urls[0] if urls else None)
-    bot_challenge_detected = headless and bool(probe_url) and await _httpx_has_bot_challenge(probe_url)
+    bot_challenge_detected = (
+        headless and bool(probe_url) and await _httpx_has_bot_challenge(probe_url)
+    )
     if bot_challenge_detected:
         print("🤖  Bot-bescherming gedetecteerd (Cloudflare/CAPTCHA).")
         print("   Browser opent zichtbaar — los de challenge op in de browser.")
@@ -111,7 +114,9 @@ async def scrape_pages(
         if bot_challenge_detected and probe_url:
             _ch_page = await context.new_page()
             try:
-                await _ch_page.goto(probe_url, wait_until="domcontentloaded", timeout=30_000)
+                await _ch_page.goto(
+                    probe_url, wait_until="domcontentloaded", timeout=30_000
+                )
                 with contextlib.suppress(Exception):
                     await _ch_page.wait_for_load_state("networkidle", timeout=5_000)
                 if _is_bot_challenge(await _ch_page.content()):
@@ -134,7 +139,9 @@ async def scrape_pages(
         if start_url is not None and login_strategy.mode != "none":
             _sw_page = await context.new_page()
             try:
-                await _sw_page.goto(start_url, wait_until="domcontentloaded", timeout=30_000)
+                await _sw_page.goto(
+                    start_url, wait_until="domcontentloaded", timeout=30_000
+                )
                 _swagger = await detect_swagger_in_page(_sw_page)
                 if _swagger:
                     raise SwaggerDetected(_swagger)
@@ -185,7 +192,9 @@ def _norm_url(url: str) -> str:
     return urlunparse((p.scheme.lower(), p.netloc.lower(), unquote(p.path), "", "", ""))
 
 
-async def _wait_for_js_content(page: Page, stable_for: float = 1.5, timeout: float = 12.0) -> None:
+async def _wait_for_js_content(
+    page: Page, stable_for: float = 1.5, timeout: float = 12.0
+) -> None:
     """Wacht tot het aantal links op de pagina stabiel is.
 
     Confluence en andere SPA's laden de zijbalk-navigatie asynchroon ná
@@ -194,6 +203,7 @@ async def _wait_for_js_content(page: Page, stable_for: float = 1.5, timeout: flo
     navigatie volledig geladen is.
     """
     import time
+
     deadline = time.monotonic() + timeout
     prev_count = -1
     stable_since = time.monotonic()
@@ -209,7 +219,9 @@ async def _wait_for_js_content(page: Page, stable_for: float = 1.5, timeout: flo
         await asyncio.sleep(0.3)
 
 
-async def _claude_identify_nav_links(same_domain_links: list[str], base_url: str) -> list[str]:
+async def _claude_identify_nav_links(
+    same_domain_links: list[str], base_url: str
+) -> list[str]:
     """Vraag Claude welke same-domain links documentatie-navigatielinks zijn.
 
     Wordt aangeroepen als de pad-gebaseerde scope geen child-pagina's oplevert.
@@ -329,7 +341,9 @@ async def _browser_discover_pages(
             seen.add(norm)
 
             try:
-                response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                response = await page.goto(
+                    url, wait_until="domcontentloaded", timeout=30_000
+                )
                 with contextlib.suppress(Exception):
                     await page.wait_for_load_state("networkidle", timeout=10_000)
 
@@ -344,7 +358,9 @@ async def _browser_discover_pages(
                             lambda u, _url=url: u.rstrip("/") != _url.rstrip("/"),
                             timeout=5_000,
                         )
-                        await _wait_for_js_content(page)  # wacht ook op de doorgestuurde pagina
+                        await _wait_for_js_content(
+                            page
+                        )  # wacht ook op de doorgestuurde pagina
                     except Exception:  # noqa: BLE001
                         pass  # geen redirect binnen 5s — dan is dit de eindpagina
 
@@ -368,7 +384,8 @@ async def _browser_discover_pages(
                     "els => els.map(e => e.href)",
                 )
                 same_domain = [
-                    link for link in links
+                    link
+                    for link in links
                     if urlparse(link).netloc.lower() == parsed.netloc.lower()
                 ]
 
@@ -378,13 +395,19 @@ async def _browser_discover_pages(
                 if first_page:
                     first_page = False
                     in_scope_children = [
-                        link for link in same_domain
+                        link
+                        for link in same_domain
                         if _in_scope(link.split("#")[0].split("?")[0].rstrip("/"))
-                        and _norm_url(link.split("#")[0].split("?")[0].rstrip("/")) not in seen
+                        and _norm_url(link.split("#")[0].split("?")[0].rstrip("/"))
+                        not in seen
                     ]
                     if not in_scope_children and same_domain:
-                        print("   🤖  Pad-prefix niet herkend — Claude analyseert navigatiestructuur...")
-                        claude_links = await _claude_identify_nav_links(same_domain, base_url)
+                        print(
+                            "   🤖  Pad-prefix niet herkend — Claude analyseert navigatiestructuur..."
+                        )
+                        claude_links = await _claude_identify_nav_links(
+                            same_domain, base_url
+                        )
                         if claude_links:
                             new_prefix = _common_path_prefix(claude_links)
                             if new_prefix and new_prefix != scope["path"]:
@@ -393,7 +416,9 @@ async def _browser_discover_pages(
                             for link in claude_links:
                                 _enqueue(link)
                         elif not same_domain:
-                            print("   ⚠️  Geen links gevonden — probeer --login manual als de site inloggen vereist.")
+                            print(
+                                "   ⚠️  Geen links gevonden — probeer --login manual als de site inloggen vereist."
+                            )
 
                 for link in same_domain:
                     _enqueue(link)
@@ -408,7 +433,9 @@ async def _browser_discover_pages(
     return sorted(set(result))
 
 
-async def _scrape_single_page(page: Page, url: str, extra_wait: float = 0.0) -> ScrapedPage:
+async def _scrape_single_page(
+    page: Page, url: str, extra_wait: float = 0.0
+) -> ScrapedPage:
     """Laad één pagina volledig en geef de HTML terug."""
     # networkidle wacht op Cloudflare-redirect-chains; timeout is niet-fataal
     # zodat sites met continue achtergrond-requests ook werken.

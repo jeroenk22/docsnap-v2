@@ -1,4 +1,5 @@
 """Tests voor de Playwright scraper."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +24,9 @@ def _make_mock_page(url: str = "https://docs.example.com") -> AsyncMock:
     mock_page.goto = AsyncMock()
     mock_page.wait_for_load_state = AsyncMock()
     mock_page.evaluate = AsyncMock(return_value=0)
-    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.locator = MagicMock(
+        return_value=AsyncMock(count=AsyncMock(return_value=0))
+    )
     mock_page.inner_html = AsyncMock(return_value="<div>content</div>")
     mock_page.content = AsyncMock(return_value="<html><body></body></html>")
     mock_page.title = AsyncMock(return_value="Test")
@@ -117,9 +120,13 @@ async def test_scrape_pages_uses_browser_discovery_when_authenticated() -> None:
     with (
         patch("src.scraper.async_playwright", return_value=mock_pw),
         patch("src.scraper.apply_login"),
-        patch("src.scraper._browser_discover_pages", return_value=discovered) as mock_discover,
+        patch(
+            "src.scraper._browser_discover_pages", return_value=discovered
+        ) as mock_discover,
     ):
-        results = await scrape_pages([], login_strategy, headless=True, start_url=start_url)
+        results = await scrape_pages(
+            [], login_strategy, headless=True, start_url=start_url
+        )
 
     mock_discover.assert_called_once()
     assert len(results) == len(discovered)
@@ -132,11 +139,11 @@ async def test_browser_discover_pages_respects_path_prefix() -> None:
 
     # Pagina bevat links naar eigen space, andere space, en extern domein
     all_links = [
-        "https://support.example.com/space/API/page-one",   # ✓ binnen prefix
-        "https://support.example.com/space/API/page-two",   # ✓ binnen prefix
-        "https://support.example.com/space/VIS/other",      # ✗ andere space
-        "https://support.example.com/home",                 # ✗ buiten prefix
-        "https://other.com/page",                           # ✗ ander domein
+        "https://support.example.com/space/API/page-one",  # ✓ binnen prefix
+        "https://support.example.com/space/API/page-two",  # ✓ binnen prefix
+        "https://support.example.com/space/VIS/other",  # ✗ andere space
+        "https://support.example.com/home",  # ✗ buiten prefix
+        "https://other.com/page",  # ✗ ander domein
     ]
 
     mock_page = AsyncMock()
@@ -215,7 +222,9 @@ async def test_scrape_single_page_uses_main_selector_when_available() -> None:
     mock_page.goto = AsyncMock()
     mock_page.wait_for_load_state = AsyncMock()
     mock_page.evaluate = AsyncMock(return_value=0)
-    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.locator = MagicMock(
+        return_value=AsyncMock(count=AsyncMock(return_value=0))
+    )
     mock_page.title = AsyncMock(return_value="Test Page")
     mock_page.content = AsyncMock(return_value="<html><body></body></html>")
 
@@ -236,7 +245,9 @@ async def test_scrape_single_page_falls_back_to_body() -> None:
     mock_page.goto = AsyncMock()
     mock_page.wait_for_load_state = AsyncMock()
     mock_page.evaluate = AsyncMock(return_value=0)
-    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.locator = MagicMock(
+        return_value=AsyncMock(count=AsyncMock(return_value=0))
+    )
     mock_page.title = AsyncMock(return_value="Test Page")
     mock_page.content = AsyncMock(return_value="<html><body></body></html>")
 
@@ -261,7 +272,9 @@ async def test_scrape_single_page_waits_for_bot_challenge() -> None:
     mock_page = AsyncMock()
     mock_page.goto = AsyncMock()
     mock_page.evaluate = AsyncMock(return_value=0)
-    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.locator = MagicMock(
+        return_value=AsyncMock(count=AsyncMock(return_value=0))
+    )
     mock_page.title = AsyncMock(return_value="Test Page")
     mock_page.inner_html = AsyncMock(return_value="<h1>Docs</h1>" + "x" * 600)
     # Eerste aanroep → challenge-pagina; tweede aanroep (in _wait_for_challenge_solved) → gewoon
@@ -272,7 +285,9 @@ async def test_scrape_single_page_waits_for_bot_challenge() -> None:
         ]
     )
 
-    with patch("src.scraper._wait_for_challenge_solved", new_callable=AsyncMock) as mock_wait:
+    with patch(
+        "src.scraper._wait_for_challenge_solved", new_callable=AsyncMock
+    ) as mock_wait:
         await _scrape_single_page(mock_page, "https://docs.example.com/page")
 
     mock_wait.assert_called_once()
@@ -285,7 +300,9 @@ async def test_scrape_single_page_handles_content_exception() -> None:
     mock_page.goto = AsyncMock()
     mock_page.content = AsyncMock(side_effect=Exception("page closed"))
     mock_page.evaluate = AsyncMock(return_value=0)
-    mock_page.locator = MagicMock(return_value=AsyncMock(count=AsyncMock(return_value=0)))
+    mock_page.locator = MagicMock(
+        return_value=AsyncMock(count=AsyncMock(return_value=0))
+    )
     mock_page.title = AsyncMock(return_value="Test")
     mock_page.inner_html = AsyncMock(return_value="<h1>Docs</h1>" + "x" * 600)
 
@@ -296,6 +313,7 @@ async def test_scrape_single_page_handles_content_exception() -> None:
 # ---------------------------------------------------------------------------
 # Tests voor bot-challenge detectie
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_scrape_pages_logs_error_when_scraping_fails() -> None:
@@ -505,4 +523,6 @@ async def test_claude_identify_nav_links_returns_empty_on_error() -> None:
     client = MagicMock()
     client.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
     with patch("anthropic.AsyncAnthropic", return_value=client):
-        assert await _claude_identify_nav_links(["https://x.com/a"], "https://x.com") == []
+        assert (
+            await _claude_identify_nav_links(["https://x.com/a"], "https://x.com") == []
+        )

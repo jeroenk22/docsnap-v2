@@ -4,6 +4,7 @@ CLI entry point voor docsnap-v2.
 Gebruik:
     docsnap <url> [--login none|form|manual] [--user x] [--pass y] [--output markdown|files|pdf]
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,9 @@ load_dotenv()
     show_default=True,
     help="Login strategie.",
 )
-@click.option("--user", "username", default=None, help="Gebruikersnaam voor form-login.")
+@click.option(
+    "--user", "username", default=None, help="Gebruikersnaam voor form-login."
+)
 @click.option("--pass", "password", default=None, help="Wachtwoord voor form-login.")
 @click.option(
     "--output",
@@ -114,7 +117,9 @@ async def _run(
         click.echo("📡  Pagina's ontdekken...")
         pages = await discover_pages(url)
         if len(pages) <= 1:
-            click.echo("   → Geen sitemap gevonden — browser wordt gebruikt voor discovery.")
+            click.echo(
+                "   → Geen sitemap gevonden — browser wordt gebruikt voor discovery."
+            )
             pages = []
         else:
             click.echo(f"   → {len(pages)} pagina's gevonden.")
@@ -128,7 +133,9 @@ async def _run(
         try:
             raw_pages = await scrape_pages(pages, login_strategy, start_url=url)
         except SwaggerDetected as exc:
-            click.echo("✅  Swagger/OpenAPI spec gevonden na inloggen — sla scraping over.")
+            click.echo(
+                "✅  Swagger/OpenAPI spec gevonden na inloggen — sla scraping over."
+            )
             click.echo(f"💾  Opslaan als {output} in {out_path}...")
             export({"swagger": exc.result}, output, out_path, project_name)
             click.echo("✅  Klaar!")
@@ -141,7 +148,9 @@ async def _run(
     # Stap 5b: herlaad pagina's die de completeness-check niet haalden
     incomplete_urls = [c["url"] for c in cleaned_pages if c.get("_incomplete")]
     if incomplete_urls:
-        click.echo(f"🔄  {len(incomplete_urls)} mogelijk onvolledige pagina's opnieuw scrapen (extra wachttijd)...")
+        click.echo(
+            f"🔄  {len(incomplete_urls)} mogelijk onvolledige pagina's opnieuw scrapen (extra wachttijd)..."
+        )
         retried = await scrape_pages(incomplete_urls, login_strategy, extra_wait=3.0)
         if retried:
             retried_cleaned = await clean_pages(retried)

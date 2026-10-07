@@ -1,4 +1,5 @@
 """Tests voor de exporter module."""
+
 import pytest
 
 from src.exporter import _spec_basename, _url_to_filename, export
@@ -72,12 +73,18 @@ def test_export_invalid_pages_type(tmp_path):
 
 def test_url_to_filename_simple_path():
     """Eenvoudig pad wordt correct omgezet."""
-    assert _url_to_filename("https://docs.example.com/getting-started") == "getting-started"
+    assert (
+        _url_to_filename("https://docs.example.com/getting-started")
+        == "getting-started"
+    )
 
 
 def test_url_to_filename_nested_path():
     """Genest pad wordt omgezet met underscores."""
-    assert _url_to_filename("https://docs.example.com/api/v2/endpoints") == "api_v2_endpoints"
+    assert (
+        _url_to_filename("https://docs.example.com/api/v2/endpoints")
+        == "api_v2_endpoints"
+    )
 
 
 def test_url_to_filename_no_slashes():
@@ -100,7 +107,10 @@ def test_url_to_filename_max_length():
 
 def test_spec_basename_uses_title_and_version():
     """Bestandsnaam bevat title en version uit de spec."""
-    spec = {"openapi": "3.0.3", "info": {"title": "MendriX API", "version": "2025.3.66.7056"}}
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "MendriX API", "version": "2025.3.66.7056"},
+    }
     assert _spec_basename(spec, "fallback") == "MendriX-API-2025.3.66.7056-openapi"
 
 
@@ -119,12 +129,17 @@ def test_spec_basename_fallback_when_no_info():
 def test_export_swagger_json(tmp_path):
     """Swagger JSON spec wordt opgeslagen in json/ submap."""
     spec = {"openapi": "3.0.3", "info": {"title": "Test API", "version": "1.0"}}
-    swagger_result = {"format": "json", "spec": spec, "url": "https://example.com/openapi.json"}
+    swagger_result = {
+        "format": "json",
+        "spec": spec,
+        "url": "https://example.com/openapi.json",
+    }
     export({"swagger": swagger_result}, "markdown", tmp_path, project_name="test-api")
 
     out_file = tmp_path / "json" / "Test-API-1.0-openapi.json"
     assert out_file.exists()
     import json
+
     data = json.loads(out_file.read_text())
     assert data == spec
 
@@ -132,7 +147,11 @@ def test_export_swagger_json(tmp_path):
 def test_export_swagger_yaml_raw(tmp_path):
     """Swagger YAML (raw string) wordt opgeslagen in yaml/ submap."""
     raw_yaml = "openapi: 3.0.3\ninfo:\n  title: Test API\n"
-    swagger_result = {"format": "yaml_raw", "spec": raw_yaml, "url": "https://example.com/openapi.yaml"}
+    swagger_result = {
+        "format": "yaml_raw",
+        "spec": raw_yaml,
+        "url": "https://example.com/openapi.yaml",
+    }
     export({"swagger": swagger_result}, "markdown", tmp_path, project_name="test-api")
 
     yaml_dir = tmp_path / "yaml"

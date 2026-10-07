@@ -9,6 +9,7 @@ Gebruikt claude-haiku-4-5-20251001 (goedkoop, snel) om per pagina:
 Voor het aanroepen worden scripts, stijlen en binaire data uit de HTML
 gestript zodat het token-budget volledig naar documentatie-inhoud gaat.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +21,9 @@ import anthropic
 from .scraper import ScrapedPage
 
 MODEL = "claude-haiku-4-5-20251001"
-MAX_HTML_CHARS = 150_000  # na pre-cleaning; ~37.5K tokens, veilig onder 50K tokens/min limit
+MAX_HTML_CHARS = (
+    150_000  # na pre-cleaning; ~37.5K tokens, veilig onder 50K tokens/min limit
+)
 MAX_RESPONSE_TOKENS = 8_192  # ruim genoeg voor pagina's met lange code blocks
 
 SYSTEM_PROMPT = """Je bent een HTML-naar-Markdown converter gespecialiseerd in documentatiesites.
@@ -51,8 +54,12 @@ def _preprocess_html(html: str) -> str:
     Verwijdert scripts, stijlen, SVGs en base64-data. De documentatie-inhoud
     (tekst, koppen, code blocks, tabellen) blijft intact.
     """
-    html = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<style\b[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(
+        r"<script\b[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE
+    )
+    html = re.sub(
+        r"<style\b[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE
+    )
     html = re.sub(r"<svg\b[^>]*>.*?</svg>", "", html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r'data:[^"\';\s]+;base64,[A-Za-z0-9+/=]+', "", html)
     return html
@@ -103,7 +110,14 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 1) -> list[di
     for page, result in zip(pages, results, strict=True):
         if isinstance(result, Exception):
             print(f"⚠️  Fout bij reinigen van {page.url}: {result}")
-            cleaned.append({"url": page.url, "title": page.title, "markdown": "", "_incomplete": False})
+            cleaned.append(
+                {
+                    "url": page.url,
+                    "title": page.title,
+                    "markdown": "",
+                    "_incomplete": False,
+                }
+            )
         else:
             cleaned.append(result)
 
@@ -117,7 +131,9 @@ async def clean_pages(pages: list[ScrapedPage], concurrency: int = 1) -> list[di
         for c in empty:
             print(f"        {_fmt_url(c['url'])}")
     if incomplete:
-        print(f"\n   ⚠️  {len(incomplete)} mogelijk onvolledig (te weinig koppen vs HTML):")
+        print(
+            f"\n   ⚠️  {len(incomplete)} mogelijk onvolledig (te weinig koppen vs HTML):"
+        )
         for c in incomplete:
             print(f"        {_fmt_url(c['url'])}")
     if not empty and not incomplete:
@@ -148,7 +164,9 @@ def _split_html_into_chunks(html: str, max_chars: int) -> list[str]:
     if len(html) <= max_chars:
         return [html]
 
-    heading_positions = [m.start() for m in re.finditer(r"<h[1-3][\s>]", html, re.IGNORECASE)]
+    heading_positions = [
+        m.start() for m in re.finditer(r"<h[1-3][\s>]", html, re.IGNORECASE)
+    ]
 
     if not heading_positions:
         return [html[i : i + max_chars] for i in range(0, len(html), max_chars)]
@@ -187,7 +205,13 @@ async def _call_claude(
     message = await client.messages.create(
         model=MODEL,
         max_tokens=MAX_RESPONSE_TOKENS,
-        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        system=[
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         messages=[
             {
                 "role": "user",

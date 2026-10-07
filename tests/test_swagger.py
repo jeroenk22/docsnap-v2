@@ -1,4 +1,5 @@
 """Tests voor Swagger/OpenAPI detectie."""
+
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -74,6 +75,7 @@ def test_extract_spec_url_from_swagger_ui_config():
 # Tests voor Confluence-specifieke helpers
 # ---------------------------------------------------------------------------
 
+
 def test_extract_confluence_page_id_from_url():
     """pageId wordt correct uit een Confluence Cloud URL gehaald."""
     url = "https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3"
@@ -96,9 +98,7 @@ def test_extract_spec_from_confluence_storage_valid():
     spec = {"openapi": "3.0.3", "info": {"title": "Test API"}}
     storage_xml = (
         '<ac:structured-macro ac:name="swagger-integration">'
-        "<ac:plain-text-body><![CDATA["
-        + json.dumps(spec)
-        + "]]></ac:plain-text-body>"
+        "<ac:plain-text-body><![CDATA[" + json.dumps(spec) + "]]></ac:plain-text-body>"
         "</ac:structured-macro>"
     )
     result = _extract_spec_from_confluence_storage(storage_xml)
@@ -120,16 +120,15 @@ def test_extract_spec_from_confluence_storage_invalid_json():
 # Tests voor detect_swagger_in_page
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_detect_swagger_in_page_confluence_macro() -> None:
     """detect_swagger_in_page herkent Confluence embedded swagger en haalt spec op."""
     spec = {"openapi": "3.0.3", "info": {"title": "MendriX API"}, "paths": {}}
     storage_xml = (
-        '<ac:plain-text-body><![CDATA[' + json.dumps(spec) + ']]></ac:plain-text-body>'
+        "<ac:plain-text-body><![CDATA[" + json.dumps(spec) + "]]></ac:plain-text-body>"
     )
-    confluence_response = {
-        "body": {"storage": {"value": storage_xml}}
-    }
+    confluence_response = {"body": {"storage": {"value": storage_xml}}}
 
     mock_api_resp = AsyncMock()
     mock_api_resp.ok = True
@@ -139,7 +138,9 @@ async def test_detect_swagger_in_page_confluence_macro() -> None:
     mock_request.fetch = AsyncMock(return_value=mock_api_resp)
 
     mock_page = MagicMock()
-    mock_page.url = "https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3"
+    mock_page.url = (
+        "https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3"
+    )
     mock_page.content = AsyncMock(
         return_value='<html><body id="com.confluence.swagger.api.document"></body></html>'
     )
@@ -177,10 +178,10 @@ async def test_detect_swagger_in_page_swagger_ui_with_spec_url() -> None:
     mock_request.fetch = AsyncMock(return_value=mock_fetch_resp)
 
     swagger_html = (
-        '<html><body>'
+        "<html><body>"
         '<script src="https://unpkg.com/swagger-ui-dist/swagger-ui.js"></script>'
         "SwaggerUIBundle({ url: '/api/openapi.json' })"
-        '</body></html>'
+        "</body></html>"
     )
 
     mock_page = MagicMock()
@@ -197,6 +198,7 @@ async def test_detect_swagger_in_page_swagger_ui_with_spec_url() -> None:
 # ---------------------------------------------------------------------------
 # Tests voor detect_and_fetch_swagger (httpx-gebaseerd)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_detect_and_fetch_swagger_returns_none_for_plain_site() -> None:
@@ -275,6 +277,7 @@ async def test_detect_and_fetch_swagger_request_error_returns_none() -> None:
 # ---------------------------------------------------------------------------
 # Tests voor _fetch_spec
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_fetch_spec_json_valid() -> None:
@@ -392,7 +395,9 @@ async def test_detect_and_fetch_swagger_start_url_is_the_spec() -> None:
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with patch("src.swagger.httpx.AsyncClient", return_value=mock_client):
-        result = await detect_and_fetch_swagger("https://example.com/openapi/pro-v1.json")
+        result = await detect_and_fetch_swagger(
+            "https://example.com/openapi/pro-v1.json"
+        )
 
     assert result is not None
     assert result["spec"] == spec
@@ -473,7 +478,11 @@ async def test_detect_via_browser_intercept_captures_spec() -> None:
     ):
         result = await _detect_via_browser_intercept("https://example.com/dev")
 
-    assert result == {"url": "https://cdn.example.com/spec.json", "format": "json", "spec": spec}
+    assert result == {
+        "url": "https://cdn.example.com/spec.json",
+        "format": "json",
+        "spec": spec,
+    }
 
 
 @pytest.mark.asyncio
@@ -508,7 +517,9 @@ async def test_detect_and_fetch_swagger_uses_browser_fallback_for_api_path() -> 
     found = {"url": "u", "format": "json", "spec": {"openapi": "3.0.0"}}
     with (
         patch("src.swagger.httpx.AsyncClient", return_value=mock_client),
-        patch("src.swagger._detect_via_browser_intercept", AsyncMock(return_value=found)) as m,
+        patch(
+            "src.swagger._detect_via_browser_intercept", AsyncMock(return_value=found)
+        ) as m,
     ):
         result = await detect_and_fetch_swagger("https://example.com/dev")
 

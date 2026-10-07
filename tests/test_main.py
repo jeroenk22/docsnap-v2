@@ -1,4 +1,5 @@
 """Tests voor de CLI entry point (src/main.py)."""
+
 import pytest
 from click.testing import CliRunner
 
@@ -47,7 +48,10 @@ def test_cli_valid_options():
     "url,expected",
     [
         ("https://support.mendrix.nl/space/API", "API"),
-        ("https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3", "2025.3"),
+        (
+            "https://mendrix.atlassian.net/wiki/spaces/MAD/pages/1866694660/2025.3",
+            "2025.3",
+        ),
         ("https://docs.example.com/getting-started", "getting-started"),
         ("https://docs.example.com/", "docs"),
         ("https://docs.example.com", "docs"),
@@ -120,7 +124,11 @@ async def _run_with(tmp_path, patches, **kwargs):
 @pytest.mark.asyncio
 async def test_run_exports_swagger_and_skips_scraping(tmp_path) -> None:
     """Als er een spec gevonden wordt, wordt die geëxporteerd zonder te scrapen."""
-    spec = {"url": "https://docs.example.com/openapi.json", "format": "json", "spec": {}}
+    spec = {
+        "url": "https://docs.example.com/openapi.json",
+        "format": "json",
+        "spec": {},
+    }
     mocks, patches = _patch_pipeline(swagger=spec)
 
     await _run_with(tmp_path, patches)
@@ -171,7 +179,11 @@ async def test_run_login_exports_swagger_detected_after_login(tmp_path) -> None:
     """Een spec die pas na inloggen gevonden wordt, wordt geëxporteerd."""
     from src.swagger import SwaggerDetected
 
-    spec = {"url": "https://docs.example.com/openapi.json", "format": "json", "spec": {}}
+    spec = {
+        "url": "https://docs.example.com/openapi.json",
+        "format": "json",
+        "spec": {},
+    }
     mocks, patches = _patch_pipeline()
     mocks["scrape"].side_effect = SwaggerDetected(spec)
 

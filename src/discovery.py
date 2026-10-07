@@ -6,6 +6,7 @@ Strategie (in volgorde van voorkeur):
 2. Probeer /sitemap_index.xml
 3. Crawl recursief interne links als fallback
 """
+
 from __future__ import annotations
 
 import re
@@ -14,7 +15,31 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 _NON_HTML_EXTENSIONS = frozenset(
-    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".css", ".js", ".mjs", ".ts", ".woff", ".woff2", ".ttf", ".eot", ".pdf", ".zip", ".tar", ".gz", ".xml", ".json", ".yaml", ".yml"]
+    [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".ico",
+        ".css",
+        ".js",
+        ".mjs",
+        ".ts",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".pdf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".xml",
+        ".json",
+        ".yaml",
+        ".yml",
+    ]
 )
 
 
@@ -56,7 +81,9 @@ async def _try_sitemap(base_url: str) -> list[str]:
         for sitemap_url in candidates:
             try:
                 resp = await client.get(sitemap_url)
-                if resp.status_code == 200 and "xml" in resp.headers.get("content-type", ""):
+                if resp.status_code == 200 and "xml" in resp.headers.get(
+                    "content-type", ""
+                ):
                     return _parse_sitemap_xml(resp.text, base_url)
             except httpx.RequestError:
                 continue
@@ -77,7 +104,8 @@ def _parse_sitemap_xml(xml_content: str, base_url: str) -> list[str]:
     base_path = parsed.path.rstrip("/")
     urls = re.findall(r"<loc>(https?://[^<]+)</loc>", xml_content)
     return [
-        u for u in urls
+        u
+        for u in urls
         if urlparse(u).netloc == parsed.netloc
         and _is_html_url(u)
         and (
