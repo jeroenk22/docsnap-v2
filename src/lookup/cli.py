@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -30,6 +32,7 @@ from .render import (
     screenshot,
     wait_until_stable,
 )
+from .search import METHOD_LABELS, SearchAuthError, detect_search, run_search
 from .session import (
     BrowserUnavailable,
     is_auth_wall,
@@ -145,11 +148,11 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
         site.cfg = {"name": name, "base_url": url, "created_at": now_iso()}
     site.ensure_dirs()
 
-    say(f"[1/4] Pagina openen: {url}")
+    say(f"[1/5] Pagina openen: {url}")
     async with open_context(site) as context:
         page = await context.new_page()
         resp = await goto(page, url)
-        say("[2/4] Login-muur controleren")
+        say("[2/5] Login-muur controleren")
         # Eerst de eenduidige signalen, zodat een loginpagina niet 12s wacht
         wall = await is_auth_wall(page, resp, site, root_found=True)
         if not wall:
@@ -174,7 +177,7 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
         site.cfg.setdefault("login", {"mode": "none"})
         say("  ingelogd" if site.has_auth() else "  geen login nodig")
 
-        say("[3/4] Platform en content-container herkennen")
+        say("[3/5] Platform en content-container herkennen")
         platform = detect_platform(await page.content(), page.url)
         site.cfg["platform"] = platform
         cands = await page.evaluate(CANDIDATES_JS, DEFAULT_CONTENT_SELECTORS)
@@ -201,14 +204,121 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
                 "andere pagina's naar het verkeerde blok wijzen; laat de structuur controleren"
             )
 
-        say("[4/4] Opslaan")
-        site.cfg["structure"] = {"verified_at": now_iso(), "sample_url": url}
         shot = await screenshot(page, site.debug_dir / "init.png")
+        say("[4/5] Zoekmogelijkheden herkennen")
+        site.cfg["search"] = await detect_search(
+            site, context, page, await page.title()
+        )
+        _say_search(site)
+
+        say("[5/5] Opslaan")
+        site.cfg["structure"] = {"verified_at": now_iso(), "sample_url": url}
         site.save_cfg()
     say(f"Klaar in {time.monotonic() - t0:.1f}s. Config: {site.cfg_path}")
     if shot:
         say(f"Screenshot ter controle: {shot}")
     return 0
+
+
+def _say_search(site: Site) -> None:
+    labels = [METHOD_LABELS[m] for m in site.get("search.methods", [])]
+    say(f"  zoeken via: {', '.join(labels)}")
+    if site.get("search.methods", []) == ["sitemap"]:
+        warn(
+            "geen zoekfunctie herkend; zoeken gaat alleen op woorden in de URL's van de "
+            "sitemap. Kies pagina's liever via de inhoudsopgave."
+        )
+
+
+# ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("site_name", metavar="SITE")
+@click.argument("queries", nargs=-1, required=True)
+@click.option(
+    "--limit", default=10, show_default=True, help="Max. resultaten per zoekvraag."
+)
+@_command
+async def search(site_name: str, queries: tuple[str, ...], limit: int) -> int:
+    """Zoek met de zoekfunctie van de site; geef 3-6 varianten (NL/EN, synoniemen)."""
+    site = Site.load(site_name)
+    t0 = time.monotonic()
+    async with open_context(site) as context:
+        if not site.get("search.methods"):  # bron van voor de zoekfunctie
+            say("[0/2] Zoekmogelijkheden herkennen (eenmalig)")
+            page = await context.new_page()
+            await goto(page, site.get("structure.sample_url") or site.base_url)
+            site.cfg["search"] = await detect_search(
+                site, context, page, await page.title()
+            )
+            await page.close()
+            site.save_cfg()
+            _say_search(site)
+
+        say(f"[1/2] Zoeken in {site.name} ({len(queries)} zoekvraag/-vragen)")
+        try:
+            results = await run_search(site, context, list(queries), limit, say)
+        except SearchAuthError as e:
+            say(
+                f"FOUT: login vereist of sessie verlopen ({e}). Voer uit: login {site.name}"
+            )
+            return EXIT_AUTH
+    results = results[: limit * 2]
+
+    say(f"[2/2] {len(results)} unieke resultaten ({time.monotonic() - t0:.1f}s)")
+    for i, h in enumerate(results, 1):
+        e = cache.entry(site, h["url"])
+        status = f"in cache, {fmt_tokens(e['tokens'])}" if e else "nog niet opgehaald"
+        upd = f" | bijgewerkt {h['updated'][:10]}" if h.get("updated") else ""
+        say(f" {i}. {h['title'] or h['url']}{upd}")
+        say(f"    {h['url']}")
+        say(f"    {status} | gevonden met: {', '.join(h['queries'])}")
+        if h.get("snippet"):
+            say(f'    "{h["snippet"][:200]}"')
+    if results:
+        say(f"Ophalen: fetch {site.name} <nummers>, bv. fetch {site.name} 1 2 4-6")
+    else:
+        say(
+            "Niets gevonden. Probeer andere termen (synoniemen, Engels/Nederlands, vakjargon)."
+        )
+    site.last_search_path.write_text(
+        json.dumps(
+            {"ts": now_iso(), "queries": list(queries), "results": results},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    site.log(
+        site.usage_path,
+        {"cmd": "search", "queries": list(queries), "results": len(results)},
+    )
+    return 0
+
+
+def _targets(site: Site, items: tuple[str, ...]) -> list[str]:
+    """URL's uit losse URL's en nummers/reeksen uit de laatste zoekactie ('1', '4-6')."""
+    last = []
+    if site.last_search_path.exists():
+        last = json.loads(site.last_search_path.read_text(encoding="utf-8")).get(
+            "results", []
+        )
+    urls: list[str] = []
+    for it in items:
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", it)
+        if not m:
+            urls.append(it)
+            continue
+        a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+        for n in range(a, b + 1):
+            if not 1 <= n <= len(last):
+                raise click.UsageError(
+                    f"Resultaat {n} bestaat niet; de laatste zoekactie had {len(last)} resultaten."
+                )
+            urls.append(last[n - 1]["url"])
+    return list({norm_url(u): u for u in urls}.values())
 
 
 # ---------------------------------------------------------------------------
@@ -266,12 +376,13 @@ async def login(site_name: str, timeout: int) -> int:
 
 @cli.command()
 @click.argument("site_name", metavar="SITE")
-@click.argument("urls", nargs=-1, required=True)
+@click.argument("items", nargs=-1, required=True)
 @click.option("--no-images", is_flag=True, help="Geen afbeeldingen downloaden.")
 @_command
-async def fetch(site_name: str, urls: tuple[str, ...], no_images: bool) -> int:
-    """Haal pagina's op, volledig, als Markdown met volledigheidscontrole."""
+async def fetch(site_name: str, items: tuple[str, ...], no_images: bool) -> int:
+    """Haal pagina's op (URL's of nummers uit de laatste zoekactie), volledig, als Markdown."""
     site = Site.load(site_name)
+    urls = _targets(site, items)
     t_all = time.monotonic()
     totals = {
         "text": 0,

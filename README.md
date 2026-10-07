@@ -64,9 +64,11 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\doc-lookup" -
 ln -s "<pad naar docsnap-v2>/claude-skill/doc-lookup" ~/.claude/skills/doc-lookup
 ```
 
-Daarna in elk project: `/doc-lookup hoe stel ik een gebeurtenis in https://support.example.com/...`
+Daarna in elk project: `/doc-lookup hoe stel ik een gebeurtenis in support.example.com`. De skill
+gebruikt de zoekfunctie van de site zelf (zoekindex, platform-API of de zoekbalk) en leest de
+beste treffers volledig.
 
-Het commando werkt ook los: `docsnap-lookup --help` (`sites`, `init`, `login`, `fetch`).
+Het commando werkt ook los: `docsnap-lookup --help` (`sites`, `init`, `login`, `search`, `fetch`).
 
 ## Omgevingsvariabelen
 

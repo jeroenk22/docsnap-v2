@@ -127,6 +127,7 @@ class Site:
         self.debug_dir = self.dir / "debug"
         self.index_path = self.dir / "index.json"
         self.usage_path = self.dir / "usage.jsonl"
+        self.last_search_path = self.dir / "last_search.json"
         self.cfg: dict = {}
         self.index: dict = {}
 

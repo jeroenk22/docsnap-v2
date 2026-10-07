@@ -16,6 +16,8 @@ from urllib.parse import parse_qs
 
 import pytest
 
+from . import searchsite
+
 pytest.importorskip("bs4", reason="vereist de extra 'lookup'")
 
 
@@ -126,6 +128,8 @@ class _Handler(BaseHTTPRequestHandler):
         return self._send(200, LOGIN_PAGE)
 
     def do_GET(self) -> None:
+        if found := searchsite.route(self.path, self.headers.get("Host", "")):
+            return self._send(found[0], found[1], found[2])
         if self.path == "/login":
             return self._send(200, LOGIN_PAGE)
         if self.path == "/open/sticky":

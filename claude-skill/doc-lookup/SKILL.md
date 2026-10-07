@@ -34,8 +34,11 @@ Plak geen lange logs, maar meld wel eerlijk wat mislukt of onvolledig is.
 **0. Bron bepalen**
 - Werkt `docsnap-lookup` niet ("command not found"): zie *Installatie* onderaan, meld het en stop.
 - `$DL sites` toont de bekende bronnen. Kies de bron uit de vraag of URL.
-- Onbekende bron: `$DL init <url van een artikelpagina> [--name kortenaam]`. Kies een gewone
-  artikelpagina, geen overzicht met alleen links; anders kiest de herkenning de verkeerde container.
+- Onbekende bron: `$DL init <url> [--name kortenaam]`. Een domein of startpagina is genoeg
+  (`wiki.example.com` → `https://wiki.example.com`). `init` herkent ook hoe de site zoekt
+  ("zoeken via: ..."). Was de URL geen gewone artikelpagina, draai dan na de eerste zoekactie
+  `$DL init <url van een gevonden artikel> --name <bron> --refresh`, zodat de content-container
+  op een echt artikel herkend wordt (een overzicht met alleen links misleidt de herkenning).
 - **Exit 3 / "Login vereist"**: `$DL login <bron>` (Bash met `timeout: 600000`). Zeg de gebruiker
   dat er een browservenster opent waarin hij zelf inlogt; het script ziet zelf wanneer dat gelukt
   is. Vraag nooit om wachtwoorden en typ ze nooit zelf. Daarna:
@@ -47,13 +50,22 @@ Plak geen lange logs, maar meld wel eerlijk wat mislukt of onvolledig is.
 **1. Wat is er al?** `$DL sites` toont hoeveel pagina's een bron in de cache heeft. Kijk in het
 project in `.doc-lookup/notes/` of deze vraag eerder is uitgezocht.
 
-**2. Pagina's vinden**
-- Gaf de gebruiker URL's: gebruik die.
-- Anders: haal de startpagina of inhoudsopgave van de documentatie op met `fetch`, lees de links
-  in die Markdown en kies alles wat relevant *kan* zijn (liever een pagina te veel dan een gemiste
-  instelling). Zoek breed: synoniemen, NL en EN, vakjargon van het systeem.
+**2. Zoeken, breed**
+- Gaf de gebruiker URL's van de juiste pagina's: sla zoeken over.
+- Bedenk 3–6 zoekvarianten: synoniemen, enkelvoud/meervoud, NL én EN, het vakjargon van het
+  systeem en losse kernbegrippen (bv. "gebeurtenis instellen", "gebeurtenissen", "event", "trigger").
+  `$DL search <bron> "variant 1" "variant 2" ... --limit 10`
+- De uitvoer is een genummerde lijst met titel, URL, fragment en of de pagina al in de cache staat.
+  Pagina's die met meerdere varianten gevonden zijn staan hoger. Kies alles wat relevant *kan*
+  zijn: liever een pagina te veel dan een gemiste instelling.
+- Mager of off-topic? Zoek opnieuw met andere termen; titels en fragmenten uit de eerste ronde
+  geven goede nieuwe termen.
+- Meldt `init`/`search` "geen zoekfunctie herkend": haal de startpagina of inhoudsopgave op met
+  `fetch`, lees de links en kies daaruit. Lijkt de site wél een zoekbalk te hebben, laat dan de
+  structuur uitzoeken (zie hieronder).
 
-**3. Ophalen**: `$DL fetch <bron> <url> [<url> ...]` (`--no-images` als afbeeldingen niet nodig zijn).
+**3. Ophalen**: `$DL fetch <bron> 1 3 5-7` (nummers uit de laatste zoekactie) of met URL's
+(`--no-images` als afbeeldingen niet nodig zijn).
 Het script wacht tot de content stabiel is, slaat lege pagina's niet op en controleert per pagina
 de volledigheid (tekstdekking, tabellen, lijsten, code, koppen, afbeeldingen).
 - Exit 3: sessie verlopen → `login`, daarna hetzelfde `fetch` opnieuw.
@@ -127,6 +139,9 @@ een lage tekstdekking, laat dan een subagent met `model: opus` de diagnose doen.
   - `content.min_chars`: lager zetten als artikelen echt kort zijn (standaard 150),
   - `login.logged_in_selector`: een element dat alleen ingelogd bestaat, als de login-muur niet
     goed herkend wordt.
+  - `search.ui.page`: een pagina met een werkende zoekbalk, als `init` geen zoekfunctie vond
+    terwijl de site die wel heeft; daarna `site.yaml` de regel `methods:` onder `search:`
+    verwijderen, zodat de volgende `search` de zoekfunctie opnieuw herkent.
   Daarna `fetch` opnieuw draaien op die artikelpagina en het resultaat (volledigheid) melden.
 
 Gewoon lezen en antwoorden kan op het huidige model.
