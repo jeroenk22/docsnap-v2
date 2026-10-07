@@ -108,7 +108,7 @@ def test_split_html_splits_at_heading_boundary() -> None:
     # chunk1 = intro(100), chunk2 = section_a(118), chunk3 = section_b(118)
     chunks = _split_html_into_chunks(html, max_chars=150)
     assert len(chunks) == 3
-    assert "x" * 100 == chunks[0]
+    assert chunks[0] == "x" * 100
     assert "<h2>Section A</h2>" in chunks[1]
     assert "<h2>Section B</h2>" in chunks[2]
 

@@ -11,11 +11,12 @@ Per pagina:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse, urlunparse
 
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .discovery import _is_html_url
 from .login import LoginStrategy, apply_login
@@ -111,10 +112,8 @@ async def scrape_pages(
             _ch_page = await context.new_page()
             try:
                 await _ch_page.goto(probe_url, wait_until="domcontentloaded", timeout=30_000)
-                try:
+                with contextlib.suppress(Exception):
                     await _ch_page.wait_for_load_state("networkidle", timeout=5_000)
-                except Exception:  # noqa: BLE001
-                    pass
                 if _is_bot_challenge(await _ch_page.content()):
                     print("   Wachten tot challenge opgelost is...")
                     await _wait_for_challenge_solved(_ch_page)
@@ -259,7 +258,7 @@ def _common_path_prefix(urls: list[str]) -> str:
     if not split_paths:
         return ""
     common: list[str] = []
-    for parts in zip(*split_paths):
+    for parts in zip(*split_paths, strict=False):
         if len({p.lower() for p in parts}) == 1:
             common.append(parts[0])
         else:
@@ -331,10 +330,8 @@ async def _browser_discover_pages(
 
             try:
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                try:
+                with contextlib.suppress(Exception):
                     await page.wait_for_load_state("networkidle", timeout=10_000)
-                except Exception:  # noqa: BLE001
-                    pass
 
                 # Extra wachttijd voor SPA's die na networkidle nog links renderen.
                 await _wait_for_js_content(page)
@@ -344,7 +341,7 @@ async def _browser_discover_pages(
                 if page.url.rstrip("/") == url.rstrip("/"):
                     try:
                         await page.wait_for_url(
-                            lambda u: u.rstrip("/") != url.rstrip("/"),
+                            lambda u, _url=url: u.rstrip("/") != _url.rstrip("/"),
                             timeout=5_000,
                         )
                         await _wait_for_js_content(page)  # wacht ook op de doorgestuurde pagina
@@ -371,8 +368,8 @@ async def _browser_discover_pages(
                     "els => els.map(e => e.href)",
                 )
                 same_domain = [
-                    l for l in links
-                    if urlparse(l).netloc.lower() == parsed.netloc.lower()
+                    link for link in links
+                    if urlparse(link).netloc.lower() == parsed.netloc.lower()
                 ]
 
                 # Na de eerste pagina: als er same-domain links zijn maar geen
@@ -381,9 +378,9 @@ async def _browser_discover_pages(
                 if first_page:
                     first_page = False
                     in_scope_children = [
-                        l for l in same_domain
-                        if _in_scope(l.split("#")[0].split("?")[0].rstrip("/"))
-                        and _norm_url(l.split("#")[0].split("?")[0].rstrip("/")) not in seen
+                        link for link in same_domain
+                        if _in_scope(link.split("#")[0].split("?")[0].rstrip("/"))
+                        and _norm_url(link.split("#")[0].split("?")[0].rstrip("/")) not in seen
                     ]
                     if not in_scope_children and same_domain:
                         print("   🤖  Pad-prefix niet herkend — Claude analyseert navigatiestructuur...")
@@ -415,10 +412,8 @@ async def _scrape_single_page(page: Page, url: str, extra_wait: float = 0.0) -> 
     """Laad één pagina volledig en geef de HTML terug."""
     # networkidle wacht op Cloudflare-redirect-chains; timeout is niet-fataal
     # zodat sites met continue achtergrond-requests ook werken.
-    try:
+    with contextlib.suppress(Exception):
         await page.goto(url, wait_until="networkidle", timeout=30_000)
-    except Exception:  # noqa: BLE001
-        pass
 
     # Detecteer en wacht op per-pagina bot-challenge (bijv. Cloudflare op subpagina's)
     try:

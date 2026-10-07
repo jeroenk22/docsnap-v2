@@ -14,10 +14,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 _NON_HTML_EXTENSIONS = frozenset(
-    ".png .jpg .jpeg .gif .webp .svg .ico "
-    ".css .js .mjs .ts "
-    ".woff .woff2 .ttf .eot "
-    ".pdf .zip .tar .gz .xml .json .yaml .yml".split()
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".css", ".js", ".mjs", ".ts", ".woff", ".woff2", ".ttf", ".eot", ".pdf", ".zip", ".tar", ".gz", ".xml", ".json", ".yaml", ".yml"]
 )
 
 
