@@ -41,6 +41,7 @@ from .site import (
     default_name,
     list_sites,
     load_env_file,
+    norm_url,
     now_iso,
     url_slug,
 )
@@ -154,15 +155,16 @@ async def init(url: str, name: str | None, refresh: bool) -> int:
             wall = await is_auth_wall(page, resp, site, bool(sel and chars > 200))
         if wall:
             mode = site.get("login.mode", "none")
-            site.cfg["login"] = {
+            login_cfg = site.cfg["login"] = {
                 **(site.get("login") or {}),
                 "mode": mode if mode != "none" else "manual",
-                "login_url": page.url,
             }
+            if norm_url(page.url) != norm_url(url):  # doorgestuurd naar een loginpagina
+                login_cfg["login_url"] = page.url
             site.cfg.setdefault("platform", "generic")
             site.save_cfg()
             await screenshot(page, site.debug_dir / "init-login.png")
-            say(f"  Login vereist ({wall}). Loginpagina: {page.url}")
+            say(f"  Login vereist ({wall}). Pagina: {page.url}")
             say(
                 f"  Volgende stap: login {name}  (daarna: init {url} --name {name} --refresh)"
             )

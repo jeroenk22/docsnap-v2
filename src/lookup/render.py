@@ -48,9 +48,11 @@ DEFAULT_CONTENT_SELECTORS = [
 # Maximale wachttijd op stabiele content (seconden); bij een retry het dubbele
 STABLE_TIMEOUT = 20.0
 
+# Laadindicatoren; afbeeldingen niet (lazy <img class="loading"> blijft zo tot je scrolt)
 LOADER_SELECTORS = (
-    "[aria-busy='true'], [class*='spinner' i], [class*='skeleton' i], "
-    "[class*='loading' i]:not(body):not(html), .ak-spinner"
+    "[aria-busy='true']:not(img), [class*='spinner' i]:not(img), "
+    "[class*='skeleton' i]:not(img), [class*='loading' i]:not(body):not(html):not(img), "
+    ".ak-spinner"
 )
 
 # Pagina-specifieke opschoning per platform (binnen de content-container)
@@ -100,7 +102,8 @@ STABILITY_JS = """
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
     if (r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'
-        && (root.contains(el) || el.contains(root) || r.width * r.height > 2000)) busy++;
+        && (root.contains(el) || el.contains(root)
+            || r.width * r.height > 0.5 * innerWidth * innerHeight)) busy++;  // overlay
   }
   return {chars: t.length, imgs: root.querySelectorAll('img').length, busy};
 }
@@ -119,8 +122,11 @@ CANDIDATES_JS = """
     const role = el.getAttribute('role'); if (role && !cls.length) s += `[role=${role}]`;
     return s;
   };
+  // Dialogen en cookie-/consentbanners zijn nooit de content
+  const OVERLAY = '[role=dialog], [aria-modal=true], [class*="dialog" i], [class*="modal" i], ' +
+                  '[class*="cookie" i], [id*="cookie" i], [class*="consent" i], [id*="consent" i]';
   const add = (el, how) => {
-    if (!el || seen.has(el)) return; seen.add(el);
+    if (!el || seen.has(el) || el.closest(OVERLAY)) return; seen.add(el);
     const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
     const links = [...el.querySelectorAll('a')].reduce((n, a) => n + (a.innerText || '').length, 0);
     out.push({selector: describe(el), how, chars: t.length,
@@ -129,7 +135,7 @@ CANDIDATES_JS = """
   };
   for (const s of known) { try { add(document.querySelector(s), 'bekend: ' + s); } catch (e) {} }
   const blocks = [...document.querySelectorAll('div, section, article, main')]
-    .filter(el => !el.closest('nav, header, footer, aside'));
+    .filter(el => !el.closest('nav, header, footer, aside') && !el.closest(OVERLAY));
   blocks.map(el => {
       const t = (el.innerText || '').length;
       const links = [...el.querySelectorAll('a')].reduce((n, a) => n + (a.innerText || '').length, 0);
@@ -154,6 +160,14 @@ EXTRACT_JS = """
   clone.querySelectorAll('h1 a[href^="#"], h2 a[href^="#"], h3 a[href^="#"], h4 a[href^="#"], h5 a[href^="#"], h6 a[href^="#"]').forEach(a => {
     if (/^[\\s¶#§\\u{1F517}\\uE000-\\uF8FF]*$/u.test(a.textContent || '')) a.remove(); });
 
+  // Sticky-header-kopieën: een tabel met alleen de koprij, direct gevolgd door de echte tabel
+  const rowText = (r) => (r ? r.textContent : '').replace(/\s+/g, ' ').trim();
+  const tables = [...clone.querySelectorAll('table')];
+  tables.forEach((t, i) => {
+    const next = tables[i + 1];
+    if (next && t.rows.length <= 2 && next.rows.length > t.rows.length
+        && rowText(t.rows[0]) && rowText(t.rows[0]) === rowText(next.rows[0])) t.remove();
+  });
   // Ingesloten pagina's van dezelfde site (iframe) meenemen; externe blijven een verwijzing
   const liveFrames = root.querySelectorAll('iframe');
   clone.querySelectorAll('iframe').forEach((f, i) => {
@@ -245,7 +259,7 @@ async def goto(page: Page, url: str) -> Response | None:
     resp = await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
     # Sommige SPA's worden nooit idle (websockets, polling)
     with contextlib.suppress(Exception):
-        await page.wait_for_load_state("networkidle", timeout=8_000)
+        await page.wait_for_load_state("networkidle", timeout=3_000)
     return resp
 
 
@@ -372,24 +386,34 @@ async def download_images(
     Returns (img_map, saved): img_map idx -> pad relatief aan de pagina ('' als
     de download mislukte; iconen ontbreken), saved = info per opgeslagen bestand.
     """
+    limit = asyncio.Semaphore(6)
+
+    async def get(src: str) -> tuple[bytes, str] | None:
+        try:
+            if src.startswith("data:"):
+                head, b64 = src.split(",", 1)
+                return base64.b64decode(b64), head.split(";")[0][5:]
+            async with limit:
+                r = await context.request.get(src, timeout=20_000)
+                ctype = r.headers.get("content-type", "")
+                # Een loginpagina (redirect, 200 + HTML) is geen afbeelding
+                if not r.ok or not ctype.startswith("image/"):
+                    return None
+                return await r.body(), ctype
+        except Exception:  # noqa: BLE001  (convert meldt hem als niet opgehaald)
+            return None
+
+    wanted = [im for im in imgs if not is_icon(im) and im["src"]]
+    results = await asyncio.gather(*(get(im["src"]) for im in wanted))
+
     img_map: dict[int, str] = {}
     saved: list[dict] = []
     out_dir = site.images_dir / slug
-    for im in imgs:
-        if is_icon(im) or not im["src"]:
-            continue
-        try:
-            if im["src"].startswith("data:"):
-                head, b64 = im["src"].split(",", 1)
-                body, ctype = base64.b64decode(b64), head.split(";")[0][5:]
-            else:
-                r = await context.request.get(im["src"], timeout=20_000)
-                if not r.ok:
-                    raise RuntimeError(f"HTTP {r.status}")
-                body, ctype = await r.body(), r.headers.get("content-type", "")
-        except Exception:  # noqa: BLE001  (convert meldt hem als niet opgehaald)
+    for im, result in zip(wanted, results, strict=True):
+        if result is None:
             img_map[im["idx"]] = ""
             continue
+        body, ctype = result
         ext = {
             "image/png": "png",
             "image/jpeg": "jpg",

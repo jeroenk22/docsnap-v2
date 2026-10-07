@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from markdownify import MarkdownConverter
 
 ICON_HINT = re.compile(r"(emoji|icon|avatar|spinner|badge|status-macro)", re.I)
@@ -86,9 +86,18 @@ def _wrap_callout(
     el.replace_with(bq)
 
 
-def _clean_attrs(el: Tag) -> None:
-    for t in [el, *el.find_all(True)]:
-        t.attrs = {k: v for k, v in t.attrs.items() if k in KEEP_ATTRS}
+def _clean_table_html(table: Tag) -> None:
+    """Alleen wat inhoud draagt: geen styling, colgroups, spans of colspan="1"."""
+    for el in table.find_all(["colgroup", "col"]):
+        el.decompose()
+    for el in table.find_all("span"):
+        el.unwrap()
+    for t in [table, *table.find_all(True)]:
+        t.attrs = {
+            k: v
+            for k, v in t.attrs.items()
+            if k in KEEP_ATTRS and not (k in ("colspan", "rowspan") and str(v) == "1")
+        }
 
 
 def _table_is_complex(table: Tag) -> bool:
@@ -183,6 +192,11 @@ def html_to_markdown(html: str, img_map: dict[int, str]) -> tuple[str, dict]:
     soup = BeautifulSoup(html, "html.parser")
     info = {"complex_tables": 0, "callouts": 0, "expands": 0, "iframes": 0}
 
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment)):
+        c.extract()
+    for el in soup.find_all("button"):
+        if not el.get_text(strip=True):  # sorteer- en icoonknoppen
+            el.decompose()
     for el in soup.select(
         "button[class*=copy i], button[class*=clipboard i], [class*=copy-button i]"
     ):
@@ -205,6 +219,9 @@ def html_to_markdown(html: str, img_map: dict[int, str]) -> tuple[str, dict]:
     for el in soup.select(CALLOUT_SELECTOR):
         if not el.parent:  # al vervangen via een ouder
             continue
+        if not el.get_text(strip=True) and not el.find("img"):
+            el.decompose()  # lege meldingscomponent van de site zelf
+            continue
         classes = el.get("class", []) + [el.get("data-panel-type", "")]
         for icon in el.select(".confluence-information-macro-icon, .aui-icon"):
             icon.decompose()
@@ -221,7 +238,7 @@ def html_to_markdown(html: str, img_map: dict[int, str]) -> tuple[str, dict]:
     for table in soup.find_all("table"):
         if table.find_parent("table") or not _table_is_complex(table):
             continue
-        _clean_attrs(table)
+        _clean_table_html(table)
         key = f"DLRAWTABLE{len(raw_blocks)}X"
         raw_blocks[key] = str(table)
         table.replace_with(NavigableString(f"\n\n{key}\n\n"))

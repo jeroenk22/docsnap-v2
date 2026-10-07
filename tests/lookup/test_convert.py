@@ -19,6 +19,27 @@ def test_callout_without_title_uses_generic_label() -> None:
     assert "> **Opmerking:**" in md
 
 
+def test_empty_callout_dropped() -> None:
+    md, info = html_to_markdown(
+        "<div class='p-message-info' role='alert'><div></div></div><p>Tekst</p>", {}
+    )
+    assert md.strip() == "Tekst"
+    assert info["callouts"] == 0
+
+
+def test_complex_table_html_is_cleaned() -> None:
+    html = (
+        "<table><colgroup><col/></colgroup><tr><th colspan='1' rowspan='1'><p><span>A</span>"
+        "</p><button><span></span></button></th><th>B</th></tr><tr><td><p>x</p><p>y</p>"
+        "<!-- opmerking --></td><td>z</td></tr></table>"
+    )
+    md, info = html_to_markdown(html, {})
+    assert info["complex_tables"] == 1
+    assert "<table><tr><th><p>A</p></th><th>B</th></tr>" in md
+    assert "colgroup" not in md and "<span" not in md and "button" not in md
+    assert "opmerking" not in md
+
+
 def test_complex_table_kept_as_html() -> None:
     html = (
         "<table class='x'><tr><th rowspan='2' style='color:red'>Type</th>"

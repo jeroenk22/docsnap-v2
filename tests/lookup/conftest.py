@@ -64,6 +64,34 @@ STATIC_PAGE = (
     + "</p></main></body></html>"
 )
 
+# Zoals support.mendrix.nl: geen redirect, alleen een melding, plus een cookie-dialoog
+COOKIE_DIALOG = (
+    "<div class='p-dialog-mask'><div id='cookie_dialog' role='dialog'><h2>Cookies</h2><p>"
+    + "Deze website gebruikt cookies voor statistiek en personalisatie. " * 12
+    + "</p></div></div>"
+)
+SOFT_WALL_PAGE = (
+    "<html><body><div class='content'><h2>Inloggen vereist</h2><p>Deze pagina is "
+    f"alleen beschikbaar voor ingelogde gebruikers.</p></div>{COOKIE_DIALOG}</body></html>"
+)
+# Content in een onbekende container: de dichtheidsheuristiek moet hem vinden
+CUSTOM_PAGE = (
+    "<html><body><div class='kb-text'><h1>Orders</h1><p>"
+    + "Een order bevat een of meer zendingen met adressen en goederen. " * 6
+    + f"</p></div>{COOKIE_DIALOG}</body></html>"
+)
+
+# Zoals MendriX/Confluence: sticky-header-kopie van een tabel en een lazy afbeelding
+# die de class "loading" houdt tot je erheen scrollt
+STICKY_PAGE = (
+    "<html><body><main class='article-body'><h1>Instellingen</h1><p>"
+    + "Hieronder staan alle instellingen van de koppeling met uitleg. " * 4
+    + "</p><div class='sticky_header'><table><tr><th>Veld</th><th>Uitleg</th></tr>"
+    "</table></div><table><tr><th>Veld</th><th>Uitleg</th></tr>"
+    "<tr><td>Poort</td><td>Standaard 5561</td></tr></table>"
+    "<img class='loading' src='/img/nooit.png' width='600' height='400'></main></body></html>"
+)
+
 EMPTY_PAGE = "<html><body><main class='article-body'></main></body></html>"
 
 
@@ -96,9 +124,16 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/login":
             return self._send(200, LOGIN_PAGE)
+        if self.path == "/open/sticky":
+            return self._send(200, STICKY_PAGE)
+        if self.path == "/open/custom":
+            return self._send(200, CUSTOM_PAGE)
         if self.path.startswith("/open/"):
             return self._send(200, STATIC_PAGE)
-        if "session=ok" not in (self.headers.get("Cookie") or ""):
+        logged_in = "session=ok" in (self.headers.get("Cookie") or "")
+        if self.path == "/soft/page":
+            return self._send(200, STATIC_PAGE if logged_in else SOFT_WALL_PAGE)
+        if not logged_in:
             return self._redirect("/login")
         pages = {
             "/docs/late": LATE_PAGE,

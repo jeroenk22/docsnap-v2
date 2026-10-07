@@ -33,6 +33,18 @@ LOGIN_URL_RE = re.compile(
     r"(log-?in|sign-?in|signon|sso|saml|oauth|openid|/auth\b|/account/)", re.I
 )
 
+# Sites die geen redirect doen maar een melding tonen ("Inloggen vereist")
+LOGIN_TEXT_RE = re.compile(
+    r"(inloggen (is )?vereist|login (is )?vereist|aanmelden (is )?vereist"
+    r"|alleen (beschikbaar|zichtbaar) voor ingelogde"
+    r"|(je|u) moet (eerst )?(ingelogd|aangemeld) zijn"
+    r"|log (eerst )?in om|meld (je|u) (eerst )?aan om"
+    r"|login required|sign[- ]in required|please (log|sign) in"
+    r"|you (must|need to) (be logged in|log in|sign in)"
+    r"|(log|sign) in to (continue|view|access))",
+    re.I,
+)
+
 USER_FIELDS = [
     'input[type="email"]',
     'input[name="email"]',
@@ -120,6 +132,14 @@ async def is_auth_wall(
     marker = site.get("login.logged_in_selector")
     if marker and await page.locator(marker).count() == 0:
         return "ingelogd-kenmerk ontbreekt"
+    try:
+        text = await page.evaluate(
+            "() => (document.body?.innerText || '').slice(0, 5000)"
+        )
+    except Exception:  # noqa: BLE001
+        text = ""
+    if m := LOGIN_TEXT_RE.search(text):
+        return f"melding '{m.group(0)}'"
     try:
         if _is_bot_challenge(await page.content()):
             return "bot-controle (zoals Cloudflare) die een zichtbare browser vraagt"

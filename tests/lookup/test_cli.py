@@ -56,6 +56,25 @@ def test_init_public_page_picks_content_container(docsite) -> None:
     assert "bestaat al" in again.output
 
 
+def test_init_detects_soft_login_wall_behind_cookie_dialog(docsite) -> None:
+    """Geen redirect of wachtwoordveld, alleen een melding (zoals MendriX)."""
+    result = run("init", f"{docsite}/soft/page", "--name", "soft")
+
+    assert result.exit_code == 3
+    assert "Login vereist (melding 'Inloggen vereist')" in result.output
+    # Geen redirect: de documentatiepagina zelf is geen loginpagina
+    assert Site.load("soft").cfg["login"] == {"mode": "manual"}
+
+
+def test_init_ignores_cookie_dialog_as_content(docsite) -> None:
+    result = run("init", f"{docsite}/open/custom", "--name", "custom")
+
+    assert result.exit_code == 0, result.output
+    assert Site.load("custom").get("content.selector") == "div.kb-text"
+    assert "#cookie_dialog" not in result.output
+    assert "p-dialog-mask" not in result.output
+
+
 def test_login_with_form_saves_session(logged_in: Site) -> None:
     assert logged_in.has_auth()
     assert "session" in logged_in.auth_path.read_text(encoding="utf-8")
@@ -88,6 +107,25 @@ def test_fetch_late_loading_page_completely(docsite, logged_in: Site) -> None:
 
     again = run("fetch", "testsite", f"{docsite}/docs/late", "--no-images")
     assert "gewijzigd" in again.output  # zonder afbeelding is de inhoud anders
+
+
+def test_fetch_drops_sticky_table_copy_and_ignores_lazy_img_loader(docsite) -> None:
+    import time
+
+    assert run("init", f"{docsite}/open/sticky", "--name", "open").exit_code == 0
+
+    t0 = time.monotonic()
+    result = run("fetch", "open", f"{docsite}/open/sticky")
+
+    assert time.monotonic() - t0 < 15  # niet tot STABLE_TIMEOUT (20s) wachten
+    assert "tabellen 1/1" in result.output
+    site = Site.load("open")
+    md = (
+        site.pages_dir / f"{site.index[f'{docsite}/open/sticky']['slug']}.md"
+    ).read_text(encoding="utf-8")
+    assert md.count("| Veld | Uitleg |") == 1
+    assert "[afbeelding niet opgehaald: " in md  # mislukte download wordt gemeld
+    assert "1 afbeelding(en) niet opgehaald" in result.output
 
 
 def test_fetch_reports_missing_and_empty_pages(
